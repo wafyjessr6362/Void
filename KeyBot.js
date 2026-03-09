@@ -1,262 +1,344 @@
 /**
- * ╔══════════════════════════════════════════════════════════════════╗
- * ║               V O I D   K E Y   S Y S T E M  v4.0              ║
- * ╠══════════════════════════════════════════════════════════════════╣
- * ║  HOW IT WORKS:                                                  ║
- * ║  1. User types ?getkey in channel                               ║
- * ║  2. "Check your DMs!" appears in channel → auto-deletes 2s      ║
- * ║  3. User gets 5-minute cooldown on ?getkey                      ║
- * ║  4. DM has dropdown: 1–10 steps (each step = +24h)             ║
- * ║     Steps ADD not multiply: 3 steps = 24+24+24 = 72h           ║
- * ║  5. Each checkpoint → webpage with:                             ║
- * ║     • Ad-block detection (must disable to continue)             ║
- * ║     • Random mini-challenge (math/color/memory/click/type)      ║
- * ║     • Watch N ads sequentially (ADS env var, max 30s each)      ║
- * ║     • All 3 must pass to complete checkpoint                    ║
- * ║  6. After all steps → key delivered via DM                      ║
- * ╠══════════════════════════════════════════════════════════════════╣
- * ║  ENV VARIABLES:                                                 ║
- * ║  BOT_TOKEN             Discord bot token                        ║
- * ║  GUILD_ID              Server ID                                ║
- * ║  GET_KEY_CHANNEL_ID    Channel for ?getkey                      ║
- * ║  ADMIN_CHANNEL_ID      Channel for approve/deny cards           ║
- * ║  KEY_SECRET            HMAC signing secret                      ║
- * ║  BASE_URL              https://your-service.onrender.com        ║
- * ║  API_SECRET            Optional /validate header key            ║
- * ║  ADS                   Number of ads per checkpoint (default 1) ║
- * ╚══════════════════════════════════════════════════════════════════╝
+ * ╔═══════════════════════════════════════════════════════════════════════╗
+ * ║          V O I D   K E Y   S Y S T E M  —  v5.0 ULTIMATE            ║
+ * ╠═══════════════════════════════════════════════════════════════════════╣
+ * ║  COMPLETE FLOW:                                                      ║
+ * ║  1. User types ?getkey in channel                                    ║
+ * ║  2. Bot replies "Check your DMs!" → auto-deletes in 2s              ║
+ * ║  3. 5-minute cooldown applied to that user                          ║
+ * ║  4. User gets DM asking them to wait for admin approval             ║
+ * ║  5. Admin sees Approve/Deny card in ADMIN_CHANNEL (or owner DM)     ║
+ * ║  6. On approve → user DM gets dropdown: pick 1–10 steps            ║
+ * ║  7. Each step = exactly +24h (3 steps = 72h, never multiplied)     ║
+ * ║  8. Each step → checkpoint link button in DM                        ║
+ * ║  9. Checkpoint page:                                                 ║
+ * ║     a) Ad-block detection — must be OFF to proceed                  ║
+ * ║     b) Random challenge — answer sent to server, verified there     ║
+ * ║        Wrong answer = error shown, can retry, NEVER auto-passes     ║
+ * ║     c) Watch N ads (ADS env var) sequentially, max 30s each        ║
+ * ║     d) Complete button → server checks challenge.solved flag        ║
+ * ║  10. After all steps done → key delivered via DM                    ║
+ * ║  11. Key not shown until every single step is complete              ║
+ * ╠═══════════════════════════════════════════════════════════════════════╣
+ * ║  ENV VARIABLES (Render → Environment tab):                          ║
+ * ║  BOT_TOKEN            Your Discord bot token                        ║
+ * ║  GUILD_ID             Your server ID                                ║
+ * ║  GET_KEY_CHANNEL_ID   Channel where users type ?getkey              ║
+ * ║  ADMIN_CHANNEL_ID     Channel for approve/deny cards (optional)     ║
+ * ║  KEY_SECRET           Any long random string — signs keys           ║
+ * ║  BASE_URL             https://your-service.onrender.com             ║
+ * ║  API_SECRET           Optional — required header for /validate      ║
+ * ║  ADS                  Ads per checkpoint, default 1, max 5          ║
+ * ╠═══════════════════════════════════════════════════════════════════════╣
+ * ║  ADMIN COMMANDS:                                                     ║
+ * ║  In #get-key:  ?removekey @User                                     ║
+ * ║  DM the bot:   !help  !stats  !listkeys  !pending                   ║
+ * ║                !approve <id>  !deny <id>  !revoke <key>             ║
+ * ║                !reset <id>  !unblock <ip>                           ║
+ * ║  Slash:        /removemessage <link>   /rm <link>                   ║
+ * ╚═══════════════════════════════════════════════════════════════════════╝
  */
 
 "use strict";
 
+// ═══════════════════════════════════════════════════════════════════
+//  IMPORTS
+// ═══════════════════════════════════════════════════════════════════
 const {
     Client, GatewayIntentBits, Partials,
     EmbedBuilder, ActionRowBuilder,
     ButtonBuilder, ButtonStyle,
     StringSelectMenuBuilder, StringSelectMenuOptionBuilder,
     SlashCommandBuilder, REST, Routes,
-    Events, PermissionFlagsBits
+    Events, PermissionFlagsBits,
 } = require("discord.js");
 const express = require("express");
 const crypto  = require("crypto");
 const https   = require("https");
 const http    = require("http");
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 //  CONFIG
-// ═══════════════════════════════════════════════════════════════
-const CONFIG = {
-    TOKEN:              process.env.BOT_TOKEN,
-    GET_KEY_CHANNEL_ID: process.env.GET_KEY_CHANNEL_ID,
-    ADMIN_CHANNEL_ID:   process.env.ADMIN_CHANNEL_ID,
-    GUILD_ID:           process.env.GUILD_ID,
-    KEY_SECRET:         process.env.KEY_SECRET  || "change_this_secret",
-    API_SECRET:         process.env.API_SECRET  || "",
-    API_PORT:           process.env.PORT         || 3000,
-    BASE_URL:           process.env.BASE_URL     || "https://void-r3co.onrender.com",
-    ADS_PER_CHECKPOINT: Math.max(1, parseInt(process.env.ADS || "1")),
+// ═══════════════════════════════════════════════════════════════════
+const CFG = {
+    TOKEN:           process.env.BOT_TOKEN,
+    GUILD_ID:        process.env.GUILD_ID,
+    KEY_CHANNEL:     process.env.GET_KEY_CHANNEL_ID,
+    ADMIN_CHANNEL:   process.env.ADMIN_CHANNEL_ID   || null,
+    KEY_SECRET:      process.env.KEY_SECRET         || "void_change_this_secret",
+    API_SECRET:      process.env.API_SECRET         || "",
+    PORT:            process.env.PORT               || 3000,
+    BASE_URL:        process.env.BASE_URL           || "https://void-r3co.onrender.com",
+    ADS:             Math.min(5, Math.max(1, parseInt(process.env.ADS || "1"))),
 
-    KEY_PREFIX:    "VOID",
-    KEY_SEGMENTS:  3,
-    KEY_SEG_LEN:   4,
+    // Key shape:  VOID-XXXX-XXXX-XXXX-CHCK
+    KEY_PREFIX:      "VOID",
+    KEY_SEG_COUNT:   3,
+    KEY_SEG_LEN:     4,
 
-    MIN_STEPS:          1,
-    MAX_STEPS:          10,
-    HOURS_PER_STEP:     24,   // each step ADDS 24h — never multiplies
+    // Times (ms)
+    CHANNEL_DELETE:  2_000,          // "Check your DMs" disappears after 2s
+    COOLDOWN:        5 * 60_000,     // 5-minute ?getkey cooldown per user
+    TOKEN_TTL:       15 * 60_000,    // checkpoint link expires after 15m
+    APPROVAL_TTL:    30 * 60_000,    // approval card expires after 30m
+    CLEANUP_EVERY:   60 * 60_000,    // run cleanup every hour
+    KEEPALIVE_EVERY: 10 * 60_000,    // ping self every 10m to prevent sleep
 
-    CHANNEL_MSG_TTL:    2000,              // "Check your DMs" disappears in 2s
-    GETKEY_COOLDOWN:    5 * 60 * 1000,    // 5 minute cooldown
-    VERIFY_TOKEN_TTL:   15 * 60 * 1000,   // checkpoint link valid 15 min
-    APPROVAL_TTL:       30 * 60 * 1000,   // approval card TTL
-    CLEANUP_INTERVAL:   60 * 60 * 1000,
-    KEEPALIVE_INTERVAL: 10 * 60 * 1000,
+    // Anti-bot
+    MAX_FAILS:       5,
+    FAIL_WINDOW:     10 * 60_000,
+    BLOCK_DURATION:  60 * 60_000,
 
-    MAX_FAIL_ATTEMPTS:  5,
-    FAIL_WINDOW_MS:     10 * 60 * 1000,
-    BLOCK_DURATION_MS:  60 * 60 * 1000,
+    // Per step
+    HOURS_PER_STEP:  24,
+    MIN_STEPS:       1,
+    MAX_STEPS:       10,
 };
 
-// ═══════════════════════════════════════════════════════════════
-//  STARTUP
-// ═══════════════════════════════════════════════════════════════
-console.log("╔═══════════════════════════════════════╗");
-console.log("║   VOID KEY SYSTEM  v4.0  STARTING    ║");
-console.log("╚═══════════════════════════════════════╝");
-console.log(`[Void] BOT_TOKEN          : ${CONFIG.TOKEN              ? "✓" : "✗ MISSING"}`);
-console.log(`[Void] GUILD_ID           : ${CONFIG.GUILD_ID           ? "✓" : "✗ MISSING"}`);
-console.log(`[Void] GET_KEY_CHANNEL_ID : ${CONFIG.GET_KEY_CHANNEL_ID ? "✓" : "✗ MISSING"}`);
-console.log(`[Void] ADMIN_CHANNEL_ID   : ${CONFIG.ADMIN_CHANNEL_ID   ? "✓" : "⚠ optional"}`);
-console.log(`[Void] ADS_PER_CHECKPOINT : ${CONFIG.ADS_PER_CHECKPOINT}`);
-console.log(`[Void] BASE_URL           : ${CONFIG.BASE_URL}`);
+// ═══════════════════════════════════════════════════════════════════
+//  STARTUP CHECKS
+// ═══════════════════════════════════════════════════════════════════
+console.log("╔══════════════════════════════════════════╗");
+console.log("║   VOID KEY SYSTEM  v5.0  STARTING  ◈    ║");
+console.log("╚══════════════════════════════════════════╝");
+console.log(`  BOT_TOKEN          ${CFG.TOKEN        ? "✓" : "✗ MISSING"}`);
+console.log(`  GUILD_ID           ${CFG.GUILD_ID     ? "✓" : "✗ MISSING"}`);
+console.log(`  GET_KEY_CHANNEL_ID ${CFG.KEY_CHANNEL  ? "✓" : "✗ MISSING"}`);
+console.log(`  ADMIN_CHANNEL_ID   ${CFG.ADMIN_CHANNEL? "✓" : "⚠ optional — using owner DM"}`);
+console.log(`  ADS per checkpoint  ${CFG.ADS}`);
+console.log(`  BASE_URL           ${CFG.BASE_URL}`);
 
-if (!CONFIG.TOKEN)              { console.error("[Void] FATAL: BOT_TOKEN missing!");          process.exit(1); }
-if (!CONFIG.GUILD_ID)           { console.error("[Void] FATAL: GUILD_ID missing!");           process.exit(1); }
-if (!CONFIG.GET_KEY_CHANNEL_ID) { console.error("[Void] FATAL: GET_KEY_CHANNEL_ID missing!"); process.exit(1); }
+if (!CFG.TOKEN)       { console.error("\n[VOID] FATAL: BOT_TOKEN is not set. Exiting.\n"); process.exit(1); }
+if (!CFG.GUILD_ID)    { console.error("\n[VOID] FATAL: GUILD_ID is not set. Exiting.\n");  process.exit(1); }
+if (!CFG.KEY_CHANNEL) { console.error("\n[VOID] FATAL: GET_KEY_CHANNEL_ID is not set. Exiting.\n"); process.exit(1); }
 
-// ═══════════════════════════════════════════════════════════════
-//  STORAGE
-// ═══════════════════════════════════════════════════════════════
-const keys          = new Map();   // keyString   → KeyData
-const pendingUsers  = new Map();   // userId      → PendingData
-const verifyTokens  = new Map();   // token       → TokenData
-const cooldowns     = new Map();   // userId      → timestamp
-const failLog       = new Map();   // ip          → FailData
-const approvalQueue = new Map();   // userId      → ApprovalData
-const approvalMsgs  = new Map();   // messageId   → userId
+// ═══════════════════════════════════════════════════════════════════
+//  IN-MEMORY STORES
+// ═══════════════════════════════════════════════════════════════════
 
-// ═══════════════════════════════════════════════════════════════
-//  KEY CRYPTO
-// ═══════════════════════════════════════════════════════════════
-function generateKey() {
+/**
+ * keys          Map<keyStr, { userId, createdAt, totalSteps, stepsCompleted, expiresAt, blocked }>
+ * pending       Map<userId, { totalSteps, currentStep, keyStr, createdAt }>
+ * vtokens       Map<token,  { userId, step, createdAt, used }>
+ * challenges    Map<token,  { type, question, answer, clientData, solved }>
+ * approvals     Map<userId, { createdAt, msgId, chanId }>
+ * approvalMsgs  Map<msgId,  userId>
+ * cooldowns     Map<userId, timestamp>
+ * failLog       Map<ip,     { count, firstFail, blockedUntil }>
+ */
+const keys         = new Map();
+const pending      = new Map();
+const vtokens      = new Map();
+const challenges   = new Map();
+const approvals    = new Map();
+const approvalMsgs = new Map();
+const cooldowns    = new Map();
+const failLog      = new Map();
+
+// ═══════════════════════════════════════════════════════════════════
+//  CRYPTO — key generation and HMAC verification
+// ═══════════════════════════════════════════════════════════════════
+function makeKey() {
     const charset = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
-    const segs = [];
-    for (let s = 0; s < CONFIG.KEY_SEGMENTS; s++) {
-        let seg = "";
-        for (let c = 0; c < CONFIG.KEY_SEG_LEN; c++)
-            seg += charset[Math.floor(Math.random() * charset.length)];
-        segs.push(seg);
-    }
-    const raw = `${CONFIG.KEY_PREFIX}-${segs.join("-")}`;
-    const chk = crypto.createHmac("sha256", CONFIG.KEY_SECRET)
-        .update(raw).digest("hex").slice(0, CONFIG.KEY_SEG_LEN).toUpperCase();
+    const segs = Array.from({ length: CFG.KEY_SEG_COUNT }, () =>
+        Array.from({ length: CFG.KEY_SEG_LEN }, () =>
+            charset[Math.floor(Math.random() * charset.length)]
+        ).join("")
+    );
+    const raw = `${CFG.KEY_PREFIX}-${segs.join("-")}`;
+    const chk = crypto.createHmac("sha256", CFG.KEY_SECRET)
+        .update(raw).digest("hex").slice(0, CFG.KEY_SEG_LEN).toUpperCase();
     return `${raw}-${chk}`;
 }
 
-function verifyKeyHmac(key) {
+function validKeyHmac(key) {
     const parts = key.split("-");
-    if (parts.length < CONFIG.KEY_SEGMENTS + 2) return false;
-    const chk = parts[parts.length - 1];
-    const raw = parts.slice(0, parts.length - 1).join("-");
-    const exp = crypto.createHmac("sha256", CONFIG.KEY_SECRET)
-        .update(raw).digest("hex").slice(0, CONFIG.KEY_SEG_LEN).toUpperCase();
+    if (parts.length < CFG.KEY_SEG_COUNT + 2) return false;
+    const chk = parts.at(-1);
+    const raw = parts.slice(0, -1).join("-");
+    const exp = crypto.createHmac("sha256", CFG.KEY_SECRET)
+        .update(raw).digest("hex").slice(0, CFG.KEY_SEG_LEN).toUpperCase();
     return chk === exp;
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  HELPERS
-// ═══════════════════════════════════════════════════════════════
-function msToHuman(ms) {
+function makeToken(userId, step) {
+    const t = crypto.randomBytes(32).toString("hex");
+    vtokens.set(t, { userId, step, createdAt: Date.now(), used: false });
+    return t;
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  CHALLENGE GENERATOR
+//  Five types: math · color · word · count · sequence
+//  Answer is ONLY stored server-side — never sent to the browser
+// ═══════════════════════════════════════════════════════════════════
+function makeChallenge() {
+    const pick = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    const ri   = (min, max) => Math.floor(Math.random() * (max - min + 1)) + min;
+
+    const type = pick(["math", "color", "word", "count", "sequence"]);
+
+    if (type === "math") {
+        const op = pick(["+", "-", "*"]);
+        const a  = ri(1, 20), b = ri(1, 12);
+        const ans = op === "+" ? a + b : op === "-" ? a - b : a * b;
+        return {
+            type, answer: String(ans), solved: false,
+            question: `What is <strong>${a} ${op} ${b}</strong> ?`,
+            clientData: {},
+        };
+    }
+
+    if (type === "color") {
+        const all = ["red","blue","green","yellow","purple","orange","pink","white","cyan","brown"];
+        const target = pick(all);
+        const opts   = [target];
+        while (opts.length < 4) { const c = pick(all); if (!opts.includes(c)) opts.push(c); }
+        opts.sort(() => Math.random() - 0.5);
+        return {
+            type, answer: target, solved: false,
+            question: `Click the color: <strong style="color:${target};font-size:20px">${target.toUpperCase()}</strong>`,
+            clientData: { opts },
+        };
+    }
+
+    if (type === "word") {
+        const words  = ["VOID","VERIFY","ACCESS","SECURE","TOKEN","SHIELD","VAULT","CIPHER","GHOST","NEXUS"];
+        const target = pick(words);
+        const jumbled = target.split("").sort(() => Math.random() - 0.5).join("");
+        return {
+            type, answer: target, solved: false,
+            question: `Unscramble this word: <strong style="letter-spacing:4px">${jumbled}</strong>`,
+            clientData: {},
+        };
+    }
+
+    if (type === "count") {
+        const emojis = ["⭐","🔵","🟣","🔷","💎","🌀","🔺","🟡"];
+        const emoji  = pick(emojis);
+        const n      = ri(3, 9);
+        return {
+            type, answer: String(n), solved: false,
+            question: `How many <strong>${emoji}</strong> are there?<br><div style="font-size:22px;letter-spacing:2px;margin-top:8px">${emoji.repeat(n)}</div>`,
+            clientData: {},
+        };
+    }
+
+    // sequence
+    const start = ri(1, 8), step = ri(1, 5);
+    const seq   = [start, start+step, start+step*2, start+step*3];
+    return {
+        type, answer: String(start + step * 4), solved: false,
+        question: `What comes next?<br><strong style="font-size:18px;letter-spacing:3px">${seq.join("  ,  ")}  ,  ?</strong>`,
+        clientData: {},
+    };
+}
+
+// ═══════════════════════════════════════════════════════════════════
+//  UTILITY
+// ═══════════════════════════════════════════════════════════════════
+const fmt = (ms) => {
     if (ms <= 0) return "expired";
-    const h = Math.floor(ms / 3600000);
-    const m = Math.floor((ms % 3600000) / 60000);
-    if (h > 0) return `${h}h ${m}m`;
-    return `${m}m`;
-}
+    const h = Math.floor(ms / 3_600_000);
+    const m = Math.floor((ms % 3_600_000) / 60_000);
+    return h ? `${h}h ${m}m` : `${m}m`;
+};
 
-function progressBar(done, total) {
-    let bar = "";
-    for (let i = 0; i < total; i++) bar += i < done ? "🟣 " : "⚫ ";
-    return bar.trim() + `  (${done}/${total})`;
-}
+const bar = (done, total) =>
+    Array.from({ length: total }, (_, i) => i < done ? "🟣" : "⚫").join(" ") + `  (${done}/${total})`;
 
-function getUserKey(userId) {
-    for (const [k, d] of keys.entries())
-        if (d.userId === userId && !d.blocked) return { key: k, data: d };
+const getUserKey = (userId) => {
+    for (const [k, d] of keys) if (d.userId === userId && !d.blocked) return { key: k, data: d };
     return null;
-}
+};
 
-function generateToken(userId, step) {
-    const token = crypto.randomBytes(32).toString("hex");
-    verifyTokens.set(token, { userId, step, createdAt: Date.now(), used: false });
-    return token;
-}
+const onCooldown  = (uid) => { const t = cooldowns.get(uid); return t && Date.now() - t < CFG.COOLDOWN; };
+const cdRemaining = (uid) => { const t = cooldowns.get(uid); return t ? Math.max(0, CFG.COOLDOWN - (Date.now() - t)) : 0; };
+const setCooldown = (uid) => cooldowns.set(uid, Date.now());
 
-function isOnCooldown(userId) {
-    const last = cooldowns.get(userId);
-    return !!(last && Date.now() - last < CONFIG.GETKEY_COOLDOWN);
-}
-
-function cooldownRemaining(userId) {
-    const last = cooldowns.get(userId);
-    if (!last) return 0;
-    return Math.max(0, CONFIG.GETKEY_COOLDOWN - (Date.now() - last));
-}
-
-function setCooldown(userId) { cooldowns.set(userId, Date.now()); }
-
-function recordFail(ip) {
+const recordFail = (ip) => {
     const now = Date.now();
-    const rec = failLog.get(ip) || { count: 0, firstFail: now, blockedUntil: 0 };
-    if (now - rec.firstFail > CONFIG.FAIL_WINDOW_MS) { rec.count = 0; rec.firstFail = now; }
-    rec.count++;
-    if (rec.count >= CONFIG.MAX_FAIL_ATTEMPTS) {
-        rec.blockedUntil = now + CONFIG.BLOCK_DURATION_MS;
-        console.warn(`[Void] IP blocked: ${ip}`);
-    }
-    failLog.set(ip, rec);
-}
+    const r   = failLog.get(ip) || { count: 0, firstFail: now, blockedUntil: 0 };
+    if (now - r.firstFail > CFG.FAIL_WINDOW) { r.count = 0; r.firstFail = now; }
+    r.count++;
+    if (r.count >= CFG.MAX_FAILS) r.blockedUntil = now + CFG.BLOCK_DURATION;
+    failLog.set(ip, r);
+};
+const ipBlocked = (ip) => { const r = failLog.get(ip); return !!(r?.blockedUntil && Date.now() < r.blockedUntil); };
 
-function isBlocked(ip) {
-    const rec = failLog.get(ip);
-    return !!(rec?.blockedUntil && Date.now() < rec.blockedUntil);
-}
+const parseMsgLink = (link) => {
+    const m = link.match(/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/);
+    return m ? { guildId: m[1], channelId: m[2], messageId: m[3] } : null;
+};
 
-function parseMessageLink(link) {
-    const match = link.match(/discord\.com\/channels\/(\d+)\/(\d+)\/(\d+)/);
-    if (!match) return null;
-    return { guildId: match[1], channelId: match[2], messageId: match[3] };
-}
+const autoDelete = (msg, ms) => setTimeout(() => msg.delete().catch(() => {}), ms);
 
-// ═══════════════════════════════════════════════════════════════
-//  DM BUILDERS
-// ═══════════════════════════════════════════════════════════════
-async function dmStepSelector(user) {
-    const options = [];
-    for (let i = CONFIG.MIN_STEPS; i <= CONFIG.MAX_STEPS; i++) {
-        const hours = i * CONFIG.HOURS_PER_STEP;
-        const days  = hours >= 24 ? `${Math.floor(hours/24)}d ` : "";
-        options.push(
-            new StringSelectMenuOptionBuilder()
-                .setLabel(`${i} Step${i > 1 ? "s" : ""} — ${days}${hours % 24 > 0 ? hours % 24 + "h" : ""}`.replace("0h","").trim())
-                .setDescription(`Complete ${i} checkpoint${i>1?"s":""} → ${hours}h access`)
-                .setValue(`${i}`)
-                .setEmoji(["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"][i-1])
-        );
-    }
+// ═══════════════════════════════════════════════════════════════════
+//  EMBED BUILDERS
+// ═══════════════════════════════════════════════════════════════════
+const PURPLE = 0x6d28d9;
+const GREEN  = 0x22c55e;
+const RED    = 0xef4444;
+const YELLOW = 0xf59e0b;
+
+function makeStepSelector(user) {
+    const opts = Array.from({ length: CFG.MAX_STEPS }, (_, i) => {
+        const n = i + 1;
+        const h = n * CFG.HOURS_PER_STEP;
+        const label = h >= 24
+            ? `${n} Step${n>1?"s":""} — ${Math.floor(h/24)}d ${h%24>0?h%24+"h":""}`.trim()
+            : `${n} Step — ${h}h`;
+        return new StringSelectMenuOptionBuilder()
+            .setLabel(label.replace("0h","").trim())
+            .setDescription(`Complete ${n} checkpoint${n>1?"s":""} → ${h}h access`)
+            .setValue(`${n}`)
+            .setEmoji(["1️⃣","2️⃣","3️⃣","4️⃣","5️⃣","6️⃣","7️⃣","8️⃣","9️⃣","🔟"][i]);
+    });
 
     const embed = new EmbedBuilder()
-        .setColor(0x6d28d9)
-        .setTitle("◈  VOID — Choose Your Steps")
+        .setColor(PURPLE)
+        .setTitle("◈  VOID — Choose Your Verification Steps")
         .setDescription(
-            "Your request was **approved** ✓\n\n" +
+            "✅ Your request was **approved**.\n\n" +
             "Select how many verification steps to complete.\n" +
-            "Each step **adds** `+24h` to your key access time.\n\n" +
-            `> **1 step** = 24h &nbsp;|&nbsp; **5 steps** = 120h &nbsp;|&nbsp; **10 steps** = 240h`
+            "Every step **adds** `+24h` to your key. Steps never multiply.\n\n" +
+            "> 1 step = 24h &nbsp;|&nbsp; 5 steps = 120h &nbsp;|&nbsp; 10 steps = 240h"
         )
-        .addFields({ name: "⚡ Each Checkpoint Includes", value: `• Random verification challenge\n• Watch **${CONFIG.ADS_PER_CHECKPOINT}** ad${CONFIG.ADS_PER_CHECKPOINT>1?"s":""} (max 30s each)\n• Ad blocker must be **disabled**` })
+        .addFields({
+            name:  "⚡ Each Checkpoint Requires",
+            value: `• Disable ad blocker\n• Complete a random challenge *(server-verified)*\n• Watch **${CFG.ADS}** ad${CFG.ADS>1?"s":""} (up to 30s each)`,
+        })
         .setFooter({ text: "VOID Key System · Steps 1–10" })
         .setTimestamp();
 
     const menu = new StringSelectMenuBuilder()
-        .setCustomId(`stepselect_${user.id}`)
-        .setPlaceholder("🔑  Select steps (1–10)...")
-        .addOptions(options);
+        .setCustomId(`stepsel_${user.id}`)
+        .setPlaceholder("🔑  Select number of steps…")
+        .addOptions(opts);
 
-    await user.send({ embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] });
+    return { embeds: [embed], components: [new ActionRowBuilder().addComponents(menu)] };
 }
 
-async function dmCheckpointLink(user, step, totalSteps) {
-    const token      = generateToken(user.id, step);
-    const link       = `${CONFIG.BASE_URL}/checkpoint?token=${token}`;
-    const hoursTotal = totalSteps * CONFIG.HOURS_PER_STEP;
+function makeCheckpointDM(user, step, totalSteps) {
+    const token     = makeToken(user.id, step);
+    const link      = `${CFG.BASE_URL}/checkpoint?token=${token}`;
+    const hoursLeft = (totalSteps - step + 1) * CFG.HOURS_PER_STEP;
 
     const embed = new EmbedBuilder()
-        .setColor(0x6d28d9)
+        .setColor(PURPLE)
         .setTitle(`◈  Checkpoint ${step} / ${totalSteps}`)
-        .setDescription(
-            `Complete the verification below for **Checkpoint ${step}**.\n\n` +
-            `After all **${totalSteps}** checkpoints your key will be sent,\n` +
-            `valid for **${hoursTotal} hours** (${totalSteps} × 24h).`
-        )
+        .setDescription(`Complete this checkpoint to unlock **+${CFG.HOURS_PER_STEP}h** of access.`)
         .addFields(
-            { name: "📍 Progress",      value: progressBar(step - 1, totalSteps) },
-            { name: "⏱ Link Expires",   value: "**15 minutes**",          inline: true },
-            { name: "🎁 Hours Earned",   value: `**${(step-1)*24}h** so far`, inline: true },
-            { name: "📋 What To Do",
-              value: `1. Click the button below\n2. Disable any ad blocker\n3. Complete the random challenge\n4. Watch ${CONFIG.ADS_PER_CHECKPOINT} ad${CONFIG.ADS_PER_CHECKPOINT>1?"s":""}\n5. Done — come back here for next step` },
+            { name: "📍 Progress",     value: bar(step - 1, totalSteps) },
+            { name: "⏱ Link Expires",  value: "**15 minutes**",                         inline: true },
+            { name: "🎁 After This",   value: `**${step * CFG.HOURS_PER_STEP}h** total`, inline: true },
+            {
+                name:  "📋 Steps",
+                value: `1. Click the button below\n2. Disable any ad blocker\n3. Solve the challenge\n4. Watch ${CFG.ADS} ad${CFG.ADS>1?"s":""}\n5. Hit Complete`,
+            },
             { name: "⚠️ Warning", value: "**Do not share this link.** One-time use, tied to your account." }
         )
-        .setFooter({ text: `VOID Key System · Step ${step}/${totalSteps}` })
+        .setFooter({ text: `VOID Key System · Checkpoint ${step}/${totalSteps}` })
         .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
@@ -267,77 +349,76 @@ async function dmCheckpointLink(user, step, totalSteps) {
             .setEmoji("✅")
     );
 
-    await user.send({ embeds: [embed], components: [row] });
+    return { embeds: [embed], components: [row] };
 }
 
-async function dmFinalKey(user, key, totalSteps) {
-    const totalHours = totalSteps * CONFIG.HOURS_PER_STEP;
-
-    const embed = new EmbedBuilder()
-        .setColor(0x22c55e)
-        .setTitle("◈  All Checkpoints Complete! 🎉")
-        .setDescription(
-            `You completed all **${totalSteps}** checkpoint${totalSteps > 1 ? "s" : ""}!\n` +
-            `Total access: **${totalSteps} × 24h = ${totalHours} hours**.`
-        )
-        .addFields(
-            { name: "🔑 License Key",   value: `\`\`\`${key}\`\`\`` },
-            { name: "📍 Completed",     value: progressBar(totalSteps, totalSteps) },
-            { name: "⏳ Valid For",      value: `**${totalHours} hours**`,  inline: true },
-            { name: "✅ Steps Done",     value: `**${totalSteps}/10**`,      inline: true },
-            { name: "⚠️ Important",     value: "**Never share this key.** It is permanently tied to your Discord account." }
-        )
-        .setFooter({ text: "VOID Key System · Keep this safe" })
-        .setTimestamp();
-
-    await user.send({ embeds: [embed] });
+function makeFinalKeyDM(key, totalSteps) {
+    const totalHours = totalSteps * CFG.HOURS_PER_STEP;
+    return {
+        embeds: [new EmbedBuilder()
+            .setColor(GREEN)
+            .setTitle("◈  All Steps Complete! 🎉")
+            .setDescription(`You completed all **${totalSteps}** step${totalSteps>1?"s":""}!\n**${totalSteps} × 24h = ${totalHours}h** of access.`)
+            .addFields(
+                { name: "🔑 License Key",  value: `\`\`\`${key}\`\`\`` },
+                { name: "📍 Progress",     value: bar(totalSteps, totalSteps) },
+                { name: "⏳ Valid For",     value: `**${totalHours} hours**`,          inline: true },
+                { name: "✅ Steps",         value: `**${totalSteps}/${CFG.MAX_STEPS}**`, inline: true },
+                { name: "⚠️ Warning",       value: "**Never share this key.** It is permanently tied to your Discord account." }
+            )
+            .setFooter({ text: "VOID Key System · Keep this safe" })
+            .setTimestamp()
+        ]
+    };
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  ADMIN APPROVAL CARD
-// ═══════════════════════════════════════════════════════════════
-async function sendApprovalCard(guild, requestUser) {
+// ═══════════════════════════════════════════════════════════════════
+//  APPROVAL CARD
+// ═══════════════════════════════════════════════════════════════════
+async function sendApprovalCard(guild, reqUser) {
     const embed = new EmbedBuilder()
-        .setColor(0xf59e0b)
-        .setTitle("◈  Key Request — Pending")
-        .setDescription(`<@${requestUser.id}> has requested a key.`)
+        .setColor(YELLOW)
+        .setTitle("◈  Key Request — Needs Approval")
         .addFields(
-            { name: "👤 User",     value: requestUser.tag,          inline: true  },
-            { name: "🆔 ID",       value: `\`${requestUser.id}\``,  inline: true  },
-            { name: "📋 Status",   value: "⏳ Awaiting approval"                  },
-            { name: "⏱ Expires",  value: "This request expires in **30 min**"    }
+            { name: "👤 User",    value: reqUser.tag,             inline: true },
+            { name: "🆔 ID",      value: `\`${reqUser.id}\``,     inline: true },
+            { name: "📋 Status",  value: "⏳ Awaiting your decision" },
+            { name: "⏱ Expires", value: "Request expires in **30 minutes**" }
         )
-        .setThumbnail(requestUser.displayAvatarURL())
-        .setFooter({ text: "Click Approve or Deny" })
+        .setThumbnail(reqUser.displayAvatarURL())
+        .setFooter({ text: "Click Approve or Deny below" })
         .setTimestamp();
 
     const row = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId(`approve_${requestUser.id}`).setLabel("  Approve").setStyle(ButtonStyle.Success).setEmoji("✅"),
-        new ButtonBuilder().setCustomId(`deny_${requestUser.id}`).setLabel("  Deny").setStyle(ButtonStyle.Danger).setEmoji("❌"),
+        new ButtonBuilder().setCustomId(`appr_${reqUser.id}`).setLabel("  Approve").setStyle(ButtonStyle.Success).setEmoji("✅"),
+        new ButtonBuilder().setCustomId(`deny_${reqUser.id}`).setLabel("  Deny").setStyle(ButtonStyle.Danger).setEmoji("❌"),
     );
 
     let sent = null;
-    if (CONFIG.ADMIN_CHANNEL_ID) {
+
+    if (CFG.ADMIN_CHANNEL) {
         try {
-            const ch = await guild.channels.fetch(CONFIG.ADMIN_CHANNEL_ID);
+            const ch = await guild.channels.fetch(CFG.ADMIN_CHANNEL);
             if (ch) sent = await ch.send({ embeds: [embed], components: [row] });
-        } catch (e) { console.warn("[Void] Admin channel error:", e.message); }
+        } catch {}
     }
+
     if (!sent) {
         try {
             const owner = await guild.fetchOwner();
             sent = await owner.send({ embeds: [embed], components: [row] });
-        } catch (e) { console.error("[Void] Could not DM owner:", e.message); }
+        } catch (e) { console.error("[VOID] Could not reach admin:", e.message); }
     }
+
     if (sent) {
-        approvalMsgs.set(sent.id, requestUser.id);
-        approvalQueue.set(requestUser.id, { createdAt: Date.now(), messageId: sent.id, channelId: sent.channelId });
+        approvals.set(reqUser.id, { createdAt: Date.now(), msgId: sent.id, chanId: sent.channelId });
+        approvalMsgs.set(sent.id, reqUser.id);
     }
 }
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 //  DISCORD CLIENT
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 const client = new Client({
     intents: [
         GatewayIntentBits.Guilds,
@@ -349,75 +430,76 @@ const client = new Client({
 });
 
 client.once("ready", async () => {
-    console.log(`[Void] ✓ Online as ${client.user.tag}`);
+    console.log(`\n[VOID] ✓ Online as ${client.user.tag}`);
     client.user.setActivity("?getkey", { type: 3 });
-    await registerSlashCommands();
+    await registerSlashCmds();
 });
 
-client.on("error", (err) => console.error("[Void] Client error:", err.message));
+client.on("error", (e) => console.error("[VOID] Discord error:", e.message));
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 //  SLASH COMMANDS
-// ═══════════════════════════════════════════════════════════════
-async function registerSlashCommands() {
+// ═══════════════════════════════════════════════════════════════════
+async function registerSlashCmds() {
+    const linkOption = (b) => b.addStringOption((o) =>
+        o.setName("link").setDescription("Full Discord message link").setRequired(true));
+
     const cmds = [
-        new SlashCommandBuilder()
-            .setName("removemessage")
-            .setDescription("Delete a message by its Discord link")
-            .addStringOption(o => o.setName("link").setDescription("Full Discord message link").setRequired(true))
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).toJSON(),
-        new SlashCommandBuilder()
-            .setName("rm")
-            .setDescription("Delete a message by its link (alias)")
-            .addStringOption(o => o.setName("link").setDescription("Full Discord message link").setRequired(true))
-            .setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages).toJSON(),
+        linkOption(new SlashCommandBuilder().setName("removemessage").setDescription("Delete a message by link").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)).toJSON(),
+        linkOption(new SlashCommandBuilder().setName("rm").setDescription("Delete a message by link (alias)").setDefaultMemberPermissions(PermissionFlagsBits.ManageMessages)).toJSON(),
     ];
+
     try {
-        const rest = new REST({ version: "10" }).setToken(CONFIG.TOKEN);
-        await rest.put(Routes.applicationGuildCommands(client.user.id, CONFIG.GUILD_ID), { body: cmds });
-        console.log("[Void] ✓ Slash commands registered: /removemessage /rm");
-    } catch (e) { console.error("[Void] Slash command register error:", e.message); }
+        const rest = new REST({ version: "10" }).setToken(CFG.TOKEN);
+        await rest.put(Routes.applicationGuildCommands(client.user.id, CFG.GUILD_ID), { body: cmds });
+        console.log("[VOID] ✓ Slash commands registered: /removemessage /rm");
+    } catch (e) {
+        console.error("[VOID] Slash register failed:", e.message);
+    }
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  ?getkey + ?removekey   (in #get-key channel)
-// ═══════════════════════════════════════════════════════════════
-client.on("messageCreate", async (message) => {
-    if (message.author.bot) return;
-    if (message.channelId !== CONFIG.GET_KEY_CHANNEL_ID) return;
+// ═══════════════════════════════════════════════════════════════════
+//  ?getkey + ?removekey   (in GET_KEY_CHANNEL only)
+// ═══════════════════════════════════════════════════════════════════
+client.on("messageCreate", async (msg) => {
+    if (msg.author.bot) return;
+    if (msg.channelId !== CFG.KEY_CHANNEL) return;
 
-    const content = message.content.trim().toLowerCase();
+    const raw = msg.content.trim().toLowerCase();
 
-    // ── ?removekey @User ──────────────────────────────────────
-    if (content.startsWith("?removekey")) {
-        try { await message.delete(); } catch {}
-        const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
-        if (!guild || message.author.id !== guild.ownerId) {
-            const w = await message.channel.send(`<@${message.author.id}> ❌ Only the server owner can use \`?removekey\`.`);
-            setTimeout(() => w.delete().catch(() => {}), 4000);
-            return;
+    // ── ?removekey @User ───────────────────────────────────────────
+    if (raw.startsWith("?removekey")) {
+        try { await msg.delete(); } catch {}
+
+        const guild = await client.guilds.fetch(CFG.GUILD_ID).catch(() => null);
+        if (!guild || msg.author.id !== guild.ownerId) {
+            const w = await msg.channel.send(`<@${msg.author.id}> ❌ Only the server owner can use \`?removekey\`.`);
+            autoDelete(w, 4000); return;
         }
-        const mentioned = message.mentions.users.first();
-        if (!mentioned) {
-            const w = await message.channel.send(`❌ Usage: \`?removekey @User\``);
-            setTimeout(() => w.delete().catch(() => {}), 4000);
-            return;
+
+        const target = msg.mentions.users.first();
+        if (!target) {
+            const w = await msg.channel.send("❌ Usage: `?removekey @User`");
+            autoDelete(w, 5000); return;
         }
+
         let removed = 0;
-        for (const [k, d] of keys.entries()) { if (d.userId === mentioned.id) { keys.delete(k); removed++; } }
-        pendingUsers.delete(mentioned.id);
-        cooldowns.delete(mentioned.id);
-        approvalQueue.delete(mentioned.id);
-        const w = await message.channel.send(
+        for (const [k, d] of keys) { if (d.userId === target.id) { keys.delete(k); removed++; } }
+        pending.delete(target.id);
+        cooldowns.delete(target.id);
+        approvals.delete(target.id);
+
+        const w = await msg.channel.send(
             removed > 0
-                ? `✓  Removed **${removed}** key(s) for <@${mentioned.id}>.`
-                : `❌  No keys found for <@${mentioned.id}>.`
+                ? `✓  Removed **${removed}** key(s) for <@${target.id}>.`
+                : `❌  No keys found for <@${target.id}>.`
         );
-        setTimeout(() => w.delete().catch(() => {}), 4000);
+        autoDelete(w, 5000);
+
         if (removed > 0) {
             try {
-                await mentioned.send({ embeds: [new EmbedBuilder()
-                    .setColor(0xef4444).setTitle("◈  Key Removed")
+                await target.send({ embeds: [new EmbedBuilder()
+                    .setColor(RED).setTitle("◈  Key Removed")
                     .setDescription("Your key was removed by the server owner.\nType `?getkey` to request a new one.")
                     .setTimestamp()
                 ]});
@@ -426,137 +508,138 @@ client.on("messageCreate", async (message) => {
         return;
     }
 
-    // ── ?getkey ───────────────────────────────────────────────
-    if (content !== "?getkey") return;
-    try { await message.delete(); } catch {}
+    // ── ?getkey ────────────────────────────────────────────────────
+    if (raw !== "?getkey") return;
+    try { await msg.delete(); } catch {}
 
-    const user  = message.author;
+    const user  = msg.author;
 
-    // Active key already exists
+    // Already has active key
     const found = getUserKey(user.id);
     if (found && found.data.expiresAt > Date.now()) {
-        const w = await message.channel.send(`<@${user.id}> ✓ Check your DMs!`);
-        setTimeout(() => w.delete().catch(() => {}), CONFIG.CHANNEL_MSG_TTL);
+        const w = await msg.channel.send(`<@${user.id}> ✓ Check your DMs!`);
+        autoDelete(w, CFG.CHANNEL_DELETE);
         try {
             await user.send({ embeds: [new EmbedBuilder()
-                .setColor(0x6d28d9).setTitle("◈  You Already Have an Active Key")
+                .setColor(PURPLE).setTitle("◈  You Have an Active Key")
                 .addFields(
                     { name: "🔑 Key",     value: `\`\`\`${found.key}\`\`\`` },
-                    { name: "⏳ Expires", value: `in **${msToHuman(found.data.expiresAt - Date.now())}**` }
-                ).setFooter({ text: "Do not share your key." }).setTimestamp()
+                    { name: "⏳ Expires", value: `in **${fmt(found.data.expiresAt - Date.now())}**` }
+                )
+                .setFooter({ text: "Do not share your key." }).setTimestamp()
             ]});
         } catch {}
         return;
     }
 
-    // Cooldown check
-    if (isOnCooldown(user.id)) {
-        const remaining = msToHuman(cooldownRemaining(user.id));
-        const w = await message.channel.send(`<@${user.id}> ⏱ Cooldown active — try again in **${remaining}**.`);
-        setTimeout(() => w.delete().catch(() => {}), CONFIG.CHANNEL_MSG_TTL);
-        return;
+    // Cooldown active
+    if (onCooldown(user.id)) {
+        const w = await msg.channel.send(`<@${user.id}> ⏱ Cooldown — try again in **${fmt(cdRemaining(user.id))}**.`);
+        autoDelete(w, CFG.CHANNEL_DELETE); return;
     }
     setCooldown(user.id);
 
-    // Already pending approval
-    if (approvalQueue.has(user.id)) {
-        const w = await message.channel.send(`<@${user.id}> ⏳ Your request is already pending approval.`);
-        setTimeout(() => w.delete().catch(() => {}), CONFIG.CHANNEL_MSG_TTL);
-        return;
+    // Already queued for approval
+    if (approvals.has(user.id)) {
+        const w = await msg.channel.send(`<@${user.id}> ⏳ Your request is already pending approval.`);
+        autoDelete(w, CFG.CHANNEL_DELETE); return;
     }
 
     // Mid-verification — resend current checkpoint
-    if (pendingUsers.has(user.id)) {
-        const w = await message.channel.send(`<@${user.id}> ✓ Check your DMs!`);
-        setTimeout(() => w.delete().catch(() => {}), CONFIG.CHANNEL_MSG_TTL);
-        const pending = pendingUsers.get(user.id);
-        try { await dmCheckpointLink(user, pending.currentStep, pending.totalSteps); }
-        catch { /* DMs closed */ }
+    if (pending.has(user.id)) {
+        const w = await msg.channel.send(`<@${user.id}> ✓ Check your DMs!`);
+        autoDelete(w, CFG.CHANNEL_DELETE);
+        const p = pending.get(user.id);
+        try { await user.send(makeCheckpointDM(user, p.currentStep, p.totalSteps)); } catch {}
         return;
     }
 
-    // Queue for approval and notify user
+    // Queue for admin approval
     try {
-        // Send "Check your DMs" → disappears in 2 seconds
-        const ack = await message.channel.send(`<@${user.id}> ✓ Check your DMs!`);
-        setTimeout(() => ack.delete().catch(() => {}), CONFIG.CHANNEL_MSG_TTL);
+        const w = await msg.channel.send(`<@${user.id}> ✓ Check your DMs!`);
+        autoDelete(w, CFG.CHANNEL_DELETE);
 
-        const guild = await client.guilds.fetch(CONFIG.GUILD_ID);
+        const guild = await client.guilds.fetch(CFG.GUILD_ID);
         await sendApprovalCard(guild, user);
 
         await user.send({ embeds: [new EmbedBuilder()
-            .setColor(0xf59e0b).setTitle("◈  Request Submitted")
+            .setColor(YELLOW).setTitle("◈  Request Submitted")
             .setDescription(
-                "Your key request has been submitted for **admin approval**.\n\n" +
-                "You'll receive a DM once reviewed.\n" +
-                "A **5-minute cooldown** is now active on `?getkey`."
+                "Your request is waiting for **admin approval**.\n" +
+                "You'll receive a DM once reviewed.\n\n" +
+                `⏱ A **5-minute cooldown** is now active on \`?getkey\`.`
             )
             .setFooter({ text: "VOID Key System · Please wait" }).setTimestamp()
         ]});
-        console.log(`[Void] Request queued: ${user.tag}`);
 
+        console.log(`[VOID] Request queued: ${user.tag} (${user.id})`);
     } catch (e) {
-        console.error("[Void] Request error:", e.message);
+        console.error("[VOID] getkey error:", e.message);
     }
 });
 
-// ═══════════════════════════════════════════════════════════════
-//  INTERACTIONS  (buttons, dropdowns, slash commands)
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  INTERACTION HANDLER
+//  Handles: /removemessage, /rm, approve/deny buttons, step dropdown
+// ═══════════════════════════════════════════════════════════════════
 client.on(Events.InteractionCreate, async (interaction) => {
 
-    // ── /removemessage  /rm ───────────────────────────────────
+    // ── /removemessage  /rm ────────────────────────────────────────
     if (interaction.isChatInputCommand() &&
         (interaction.commandName === "removemessage" || interaction.commandName === "rm")) {
         await interaction.deferReply({ ephemeral: true });
-        const parsed = parseMessageLink(interaction.options.getString("link") || "");
-        if (!parsed) return interaction.editReply("❌ Invalid message link.");
-        if (parsed.guildId !== CONFIG.GUILD_ID) return interaction.editReply("❌ Message not from this server.");
+        const parsed = parseMsgLink(interaction.options.getString("link") || "");
+        if (!parsed)                          return interaction.editReply("❌ Invalid message link.");
+        if (parsed.guildId !== CFG.GUILD_ID)  return interaction.editReply("❌ Message not from this server.");
         try {
             const ch  = await client.channels.fetch(parsed.channelId);
-            const msg = await ch.messages.fetch(parsed.messageId);
-            await msg.delete();
-            console.log(`[Void] Message ${parsed.messageId} deleted by ${interaction.user.tag}`);
+            const m   = await ch.messages.fetch(parsed.messageId);
+            await m.delete();
+            console.log(`[VOID] Deleted msg ${parsed.messageId} by ${interaction.user.tag}`);
             return interaction.editReply("✓ Message deleted.");
         } catch (e) {
             return interaction.editReply(`❌ Failed: ${e.message}`);
         }
     }
 
-    // ── Approve / Deny buttons ────────────────────────────────
+    // ── Approve / Deny buttons ─────────────────────────────────────
     if (interaction.isButton()) {
         const id = interaction.customId;
-        if (!id.startsWith("approve_") && !id.startsWith("deny_")) return;
+        if (!id.startsWith("appr_") && !id.startsWith("deny_")) return;
 
-        const targetId  = id.replace("approve_", "").replace("deny_", "");
-        const isApprove = id.startsWith("approve_");
+        const targetId  = id.replace("appr_","").replace("deny_","");
+        const isApprove = id.startsWith("appr_");
 
-        const updated = EmbedBuilder.from(interaction.message.embeds[0])
-            .setColor(isApprove ? 0x22c55e : 0xef4444)
-            .spliceFields(2, 1, {
-                name: "📋 Status",
-                value: isApprove
-                    ? `✅ Approved by ${interaction.user.tag}`
-                    : `❌ Denied by ${interaction.user.tag}`,
-            });
+        // Update the card
+        try {
+            const updEmbed = EmbedBuilder.from(interaction.message.embeds[0])
+                .setColor(isApprove ? GREEN : RED)
+                .spliceFields(2, 1, {
+                    name:  "📋 Status",
+                    value: isApprove
+                        ? `✅ Approved by **${interaction.user.tag}**`
+                        : `❌ Denied by **${interaction.user.tag}**`,
+                });
+            await interaction.update({ embeds: [updEmbed], components: [] });
+        } catch {}
 
-        await interaction.update({ embeds: [updated], components: [] }).catch(() => {});
-        approvalQueue.delete(targetId);
+        approvals.delete(targetId);
         approvalMsgs.delete(interaction.message.id);
 
-        let targetUser = null;
-        try { targetUser = await client.users.fetch(targetId); } catch {}
-        if (!targetUser) return;
+        let target = null;
+        try { target = await client.users.fetch(targetId); } catch {}
+        if (!target) return;
 
         if (isApprove) {
-            console.log(`[Void] Approved: ${targetUser.tag}`);
-            try { await dmStepSelector(targetUser); } catch (e) { console.error("[Void] dmStepSelector error:", e.message); }
+            console.log(`[VOID] ✅ Approved: ${target.tag}`);
+            try { await target.send(makeStepSelector(target)); }
+            catch (e) { console.error("[VOID] Step selector DM failed:", e.message); }
         } else {
-            console.log(`[Void] Denied: ${targetUser.tag}`);
+            console.log(`[VOID] ❌ Denied: ${target.tag}`);
             try {
-                await targetUser.send({ embeds: [new EmbedBuilder()
-                    .setColor(0xef4444).setTitle("◈  Request Denied")
-                    .setDescription("Your key request was **denied**.\nContact a server admin if you think this is a mistake.")
+                await target.send({ embeds: [new EmbedBuilder()
+                    .setColor(RED).setTitle("◈  Request Denied")
+                    .setDescription("Your key request was **denied** by an admin.\nContact a server admin if you think this is a mistake.")
                     .setTimestamp()
                 ]});
             } catch {}
@@ -564,404 +647,420 @@ client.on(Events.InteractionCreate, async (interaction) => {
         return;
     }
 
-    // ── Step selector dropdown ────────────────────────────────
-    if (interaction.isStringSelectMenu() && interaction.customId.startsWith("stepselect_")) {
-        const userId = interaction.customId.replace("stepselect_", "");
-        if (interaction.user.id !== userId)
-            return interaction.reply({ content: "❌ This menu isn't for you.", ephemeral: true });
+    // ── Step selector dropdown ─────────────────────────────────────
+    if (interaction.isStringSelectMenu() && interaction.customId.startsWith("stepsel_")) {
+        const uid = interaction.customId.replace("stepsel_", "");
+        if (interaction.user.id !== uid)
+            return interaction.reply({ content: "❌ This menu is not for you.", ephemeral: true });
 
-        const totalSteps = parseInt(interaction.values[0]);
-        const totalHours = totalSteps * CONFIG.HOURS_PER_STEP;
+        const steps = parseInt(interaction.values[0]);
+        const hours = steps * CFG.HOURS_PER_STEP;
 
         await interaction.update({
             embeds: [new EmbedBuilder()
-                .setColor(0x6d28d9).setTitle("◈  Steps Confirmed")
+                .setColor(PURPLE).setTitle("◈  Steps Locked In")
                 .setDescription(
-                    `You chose **${totalSteps}** step${totalSteps > 1 ? "s" : ""}\n` +
-                    `Total access: **${totalSteps} × 24h = ${totalHours}h**\n\n` +
-                    `Complete all checkpoints and your key will be sent automatically. ↓`
+                    `You chose **${steps} step${steps>1?"s":""}** → **${steps} × 24h = ${hours}h** access.\n\n` +
+                    `Complete all ${steps} checkpoint${steps>1?"s":""} and your key will be sent automatically.`
                 )
                 .setFooter({ text: "Do not share your checkpoint links." }).setTimestamp()
             ],
-            components: []
+            components: [],
         });
 
-        const newKey = generateKey();
+        const newKey = makeKey();
         keys.set(newKey, {
-            userId: interaction.user.id,
-            createdAt: Date.now(),
-            totalSteps,
+            userId:         interaction.user.id,
+            createdAt:      Date.now(),
+            totalSteps:     steps,
             stepsCompleted: 0,
-            expiresAt: 0,
-            blocked: false,
+            expiresAt:      0,
+            blocked:        false,
         });
-        pendingUsers.set(interaction.user.id, {
-            totalSteps,
+        pending.set(interaction.user.id, {
+            totalSteps:  steps,
             currentStep: 1,
-            keyString: newKey,
-            createdAt: Date.now(),
+            keyStr:      newKey,
+            createdAt:   Date.now(),
         });
 
-        console.log(`[Void] ${interaction.user.tag} chose ${totalSteps} steps — key: ${newKey}`);
+        console.log(`[VOID] ${interaction.user.tag} → ${steps} steps, key: ${newKey}`);
 
-        try { await dmCheckpointLink(interaction.user, 1, totalSteps); }
-        catch (e) { console.error("[Void] Checkpoint DM error:", e.message); }
+        try { await interaction.user.send(makeCheckpointDM(interaction.user, 1, steps)); }
+        catch (e) { console.error("[VOID] Checkpoint DM error:", e.message); }
     }
 });
 
-// ═══════════════════════════════════════════════════════════════
-//  ADMIN DM COMMANDS
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  ADMIN DM COMMANDS  (server owner only — via DM to bot)
+// ═══════════════════════════════════════════════════════════════════
 client.on("messageCreate", async (msg) => {
     if (msg.author.bot) return;
-    if (msg.channel.type !== 1) return;
+    if (msg.channel.type !== 1) return; // DMs only
 
-    const guild = await client.guilds.fetch(CONFIG.GUILD_ID).catch(() => null);
+    const guild = await client.guilds.fetch(CFG.GUILD_ID).catch(() => null);
     if (!guild || msg.author.id !== guild.ownerId) return;
 
     const args = msg.content.trim().split(/\s+/);
     const cmd  = args[0]?.toLowerCase();
 
-    if (cmd === "!help") {
-        return msg.reply(
-            "```\nVOID KEY SYSTEM — ADMIN COMMANDS\n" +
-            "════════════════════════════════\n\n" +
-            "IN #get-key:\n" +
-            "  ?getkey              — Request a key\n" +
-            "  ?removekey @User     — Remove a user's key (owner)\n\n" +
-            "DM TO BOT:\n" +
-            "  !help                — This menu\n" +
-            "  !stats               — Key statistics\n" +
-            "  !listkeys            — All keys + status\n" +
-            "  !pending             — Pending approvals\n" +
-            "  !approve <userId>    — Approve a request\n" +
-            "  !deny <userId>       — Deny a request\n" +
-            "  !revoke <key>        — Revoke a key\n" +
-            "  !reset <userId>      — Wipe all user data\n" +
-            "  !unblock <ip>        — Unblock an IP\n\n" +
-            "SLASH COMMANDS:\n" +
-            "  /removemessage <link>\n" +
-            "  /rm <link>\n" +
-            "```"
-        );
-    }
+    switch (cmd) {
 
-    if (cmd === "!stats") {
-        const all     = [...keys.values()];
-        const active  = all.filter(d => !d.blocked && d.expiresAt > Date.now()).length;
-        const pending = all.filter(d => d.expiresAt === 0 && !d.blocked).length;
-        const expired = all.filter(d => d.expiresAt > 0 && Date.now() > d.expiresAt).length;
-        const revoked = all.filter(d => d.blocked).length;
-        return msg.reply(
-            "```\nVOID STATS\n══════════\n" +
-            `Total keys       : ${keys.size}\n` +
-            `Active           : ${active}\n` +
-            `Awaiting steps   : ${pending}\n` +
-            `Expired          : ${expired}\n` +
-            `Revoked          : ${revoked}\n` +
-            `Pending approval : ${approvalQueue.size}\n` +
-            `In verification  : ${pendingUsers.size}\n` +
-            "```"
-        );
-    }
+        case "!help":
+            return msg.reply(
+                "```\n" +
+                "VOID KEY SYSTEM — ADMIN COMMANDS\n" +
+                "══════════════════════════════════\n\n" +
+                "IN #get-key CHANNEL:\n" +
+                "  ?getkey                — Request a key (all users)\n" +
+                "  ?removekey @User       — Remove a user's key (owner only)\n\n" +
+                "DM TO BOT (owner only):\n" +
+                "  !help                  — This menu\n" +
+                "  !stats                 — Key & system statistics\n" +
+                "  !listkeys              — All keys with status\n" +
+                "  !pending               — Pending approval requests\n" +
+                "  !approve <userId>      — Manually approve a user\n" +
+                "  !deny <userId>         — Manually deny a user\n" +
+                "  !revoke <key>          — Permanently revoke a key\n" +
+                "  !reset <userId>        — Wipe all data for a user\n" +
+                "  !unblock <ip>          — Unblock a rate-limited IP\n\n" +
+                "SLASH COMMANDS (in server):\n" +
+                "  /removemessage <link>  — Delete message by link\n" +
+                "  /rm <link>             — Same, shorter alias\n" +
+                "```"
+            );
 
-    if (cmd === "!listkeys") {
-        if (keys.size === 0) return msg.reply("No keys.");
-        let out = `**Keys (${keys.size}):**\n`;
-        for (const [k, d] of keys.entries()) {
-            const st =
-                d.blocked          ? "🚫 revoked"
-                : d.expiresAt === 0 ? `⏸ pending (${d.stepsCompleted}/${d.totalSteps})`
-                : Date.now() > d.expiresAt ? "💀 expired"
-                : `✓ ${msToHuman(d.expiresAt - Date.now())} left`;
-            out += `\`${k}\` <@${d.userId}> [${st}]\n`;
+        case "!stats": {
+            const all     = [...keys.values()];
+            const active  = all.filter(d => !d.blocked && d.expiresAt > Date.now()).length;
+            const pend    = all.filter(d => d.expiresAt === 0 && !d.blocked).length;
+            const expired = all.filter(d => d.expiresAt > 0 && Date.now() > d.expiresAt).length;
+            const revoked = all.filter(d => d.blocked).length;
+            return msg.reply(
+                "```\nVOID SYSTEM STATS\n══════════════════\n" +
+                `Total keys       : ${keys.size}\n` +
+                `Active           : ${active}\n` +
+                `Awaiting steps   : ${pend}\n` +
+                `Expired          : ${expired}\n` +
+                `Revoked          : ${revoked}\n` +
+                `Pending approval : ${approvals.size}\n` +
+                `In verification  : ${pending.size}\n` +
+                "```"
+            );
         }
-        for (const c of (out.match(/[\s\S]{1,1900}/g) || [])) await msg.reply(c);
-        return;
-    }
 
-    if (cmd === "!pending") {
-        if (approvalQueue.size === 0) return msg.reply("No pending requests.");
-        let out = `**Pending (${approvalQueue.size}):**\n`;
-        for (const [uid, d] of approvalQueue.entries())
-            out += `<@${uid}> \`${uid}\` — waiting **${msToHuman(Date.now() - d.createdAt)}**\n`;
-        return msg.reply(out.slice(0, 2000));
-    }
+        case "!listkeys": {
+            if (!keys.size) return msg.reply("No keys stored.");
+            let out = `**Keys (${keys.size} total):**\n`;
+            for (const [k, d] of keys) {
+                const st =
+                    d.blocked          ? "🚫 revoked"
+                    : d.expiresAt === 0 ? `⏸ pending (${d.stepsCompleted}/${d.totalSteps} steps)`
+                    : Date.now() > d.expiresAt ? "💀 expired"
+                    : `✓ ${fmt(d.expiresAt - Date.now())} left`;
+                out += `\`${k}\` <@${d.userId}> [${st}]\n`;
+            }
+            for (const chunk of out.match(/[\s\S]{1,1900}/g) || []) await msg.reply(chunk);
+            return;
+        }
 
-    if (cmd === "!approve" && args[1]) {
-        const uid = args[1];
-        if (!approvalQueue.has(uid)) return msg.reply(`❌ No pending request for \`${uid}\``);
-        approvalQueue.delete(uid);
-        try {
-            const u = await client.users.fetch(uid);
-            await dmStepSelector(u);
-            return msg.reply(`✓ Approved <@${uid}>`);
-        } catch { return msg.reply("❌ Could not find/DM that user."); }
-    }
+        case "!pending": {
+            if (!approvals.size) return msg.reply("No pending requests.");
+            let out = `**Pending (${approvals.size}):**\n`;
+            for (const [uid, d] of approvals)
+                out += `<@${uid}> \`${uid}\` — waiting **${fmt(Date.now() - d.createdAt)}**\n`;
+            return msg.reply(out.slice(0, 2000));
+        }
 
-    if (cmd === "!deny" && args[1]) {
-        const uid = args[1];
-        approvalQueue.delete(uid);
-        try {
-            const u = await client.users.fetch(uid);
-            await u.send({ embeds: [new EmbedBuilder().setColor(0xef4444).setTitle("◈  Request Denied")
-                .setDescription("Your key request was denied.").setTimestamp()]});
-        } catch {}
-        return msg.reply(`✓ Denied \`${uid}\``);
-    }
+        case "!approve": {
+            if (!args[1]) return msg.reply("Usage: `!approve <userId>`");
+            const uid = args[1];
+            if (!approvals.has(uid)) return msg.reply(`❌ No pending request for \`${uid}\``);
+            approvals.delete(uid);
+            try {
+                const u = await client.users.fetch(uid);
+                await u.send(makeStepSelector(u));
+                return msg.reply(`✓ Approved <@${uid}>`);
+            } catch { return msg.reply("❌ Could not find or DM that user."); }
+        }
 
-    if (cmd === "!revoke" && args[1]) {
-        const key  = args[1].toUpperCase();
-        const data = keys.get(key);
-        if (!data) return msg.reply(`❌ Not found: \`${key}\``);
-        data.blocked = true; keys.set(key, data);
-        return msg.reply(`✓ Revoked: \`${key}\``);
-    }
+        case "!deny": {
+            if (!args[1]) return msg.reply("Usage: `!deny <userId>`");
+            const uid = args[1];
+            approvals.delete(uid);
+            try {
+                const u = await client.users.fetch(uid);
+                await u.send({ embeds: [new EmbedBuilder()
+                    .setColor(RED).setTitle("◈  Request Denied")
+                    .setDescription("Your key request was denied by an admin.").setTimestamp()
+                ]});
+            } catch {}
+            return msg.reply(`✓ Denied \`${args[1]}\``);
+        }
 
-    if (cmd === "!reset" && args[1]) {
-        const uid = args[1]; let r = 0;
-        for (const [k, d] of keys.entries()) { if (d.userId === uid) { keys.delete(k); r++; } }
-        pendingUsers.delete(uid); cooldowns.delete(uid); approvalQueue.delete(uid);
-        return msg.reply(`✓ Reset <@${uid}> — removed ${r} key(s).`);
-    }
+        case "!revoke": {
+            if (!args[1]) return msg.reply("Usage: `!revoke <key>`");
+            const key  = args[1].toUpperCase();
+            const data = keys.get(key);
+            if (!data) return msg.reply(`❌ Key not found: \`${key}\``);
+            data.blocked = true;
+            keys.set(key, data);
+            console.log(`[VOID] Key revoked: ${key}`);
+            return msg.reply(`✓ Revoked: \`${key}\``);
+        }
 
-    if (cmd === "!unblock" && args[1]) {
-        failLog.delete(args[1]);
-        return msg.reply(`✓ Unblocked: \`${args[1]}\``);
-    }
+        case "!reset": {
+            if (!args[1]) return msg.reply("Usage: `!reset <userId>`");
+            const uid = args[1]; let r = 0;
+            for (const [k, d] of keys) { if (d.userId === uid) { keys.delete(k); r++; } }
+            pending.delete(uid); cooldowns.delete(uid); approvals.delete(uid);
+            console.log(`[VOID] Reset user ${uid} — removed ${r} key(s)`);
+            return msg.reply(`✓ Reset <@${uid}> — removed ${r} key(s).`);
+        }
 
-    return msg.reply("❓ Unknown command. Type `!help`.");
+        case "!unblock": {
+            if (!args[1]) return msg.reply("Usage: `!unblock <ip>`");
+            failLog.delete(args[1]);
+            return msg.reply(`✓ Unblocked: \`${args[1]}\``);
+        }
+
+        default:
+            return msg.reply("❓ Unknown command. Type `!help` to see all commands.");
+    }
 });
 
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 //  EXPRESS API
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
 const app = express();
 app.use(express.json());
 
-// ── Fake ads.js — if this loads, no ad blocker ────────────────
-// Ad blockers block requests containing "ads" in the path/filename.
-// We serve a tiny JS file at /ads/ads.js — if the client can load it,
-// the ad blocker is off. If it's blocked, the page shows a warning.
-app.get("/ads/ads.js", (req, res) => {
+// Fake ads.js — ad blockers will block this path → detection works
+app.get("/ads/ads.js", (_req, res) => {
     res.setHeader("Content-Type", "application/javascript");
-    res.send(`window.__adCheckPassed = true;`);
+    res.send("window.__adBlockOff=true;");
 });
 
-// ── Optional API auth middleware ──────────────────────────────
+// Optional API key auth
 app.use((req, res, next) => {
-    if (req.path === "/ads/ads.js") return next();
-    if (CONFIG.API_SECRET && req.headers["x-api-key"] !== CONFIG.API_SECRET)
+    if (req.path.startsWith("/ads/")) return next();
+    if (CFG.API_SECRET && req.headers["x-api-key"] !== CFG.API_SECRET)
         return res.status(401).json({ valid: false, message: "Unauthorized" });
     next();
 });
 
-// ── GET /checkpoint?token=XXX ─────────────────────────────────
+// ── GET /checkpoint?token=XXX ──────────────────────────────────────
 app.get("/checkpoint", async (req, res) => {
     const token = req.query.token || "";
-    if (!token) return res.send(checkpointPage({ state:"error", msg:"Invalid or missing token.", done:0, current:1, total:1, token:"", adsCount:CONFIG.ADS_PER_CHECKPOINT }));
 
-    const tv = verifyTokens.get(token);
-    if (!tv)        return res.send(checkpointPage({ state:"error", msg:"This link is invalid or does not exist.", done:0, current:1, total:1, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
-    if (tv.used)    return res.send(checkpointPage({ state:"error", msg:"This link has already been used.", done:tv.step-1, current:tv.step, total:3, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
-    if (Date.now() - tv.createdAt > CONFIG.VERIFY_TOKEN_TTL) {
-        verifyTokens.delete(token);
-        return res.send(checkpointPage({ state:"error", msg:"Link expired. Type ?getkey in Discord for a new one.", done:0, current:tv.step, total:3, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
+    const fail = (msg, done=0, cur=1, tot=1) =>
+        res.send(buildPage({ state:"error", msg, done, cur, tot, token }));
+
+    if (!token) return fail("Missing token.");
+
+    const tv = vtokens.get(token);
+    if (!tv)      return fail("This link is invalid or doesn't exist.");
+    if (tv.used)  return fail("This link was already used.", tv.step-1, tv.step, 3);
+
+    if (Date.now() - tv.createdAt > CFG.TOKEN_TTL) {
+        vtokens.delete(token);
+        return fail("This link expired. Type ?getkey in Discord for a new one.");
     }
 
-    const found   = getUserKey(tv.userId);
-    const pending = pendingUsers.get(tv.userId);
+    const found = getUserKey(tv.userId);
+    const pend  = pending.get(tv.userId);
 
-    if (!found)   return res.send(checkpointPage({ state:"error", msg:"No key found. Type ?getkey first.", done:0, current:tv.step, total:3, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
-    if (!pending) return res.send(checkpointPage({ state:"error", msg:"Session expired. Type ?getkey again.", done:0, current:tv.step, total:found.data.totalSteps, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
-    if (tv.step !== pending.currentStep)
-        return res.send(checkpointPage({ state:"error", msg:`Wrong step. Complete Step ${pending.currentStep} first.`, done:found.data.stepsCompleted, current:tv.step, total:found.data.totalSteps, token, adsCount:CONFIG.ADS_PER_CHECKPOINT }));
+    if (!found)  return fail("No key found for your account. Type ?getkey first.");
+    if (!pend)   return fail("Session expired. Type ?getkey again.", 0, tv.step, found.data.totalSteps);
+    if (tv.step !== pend.currentStep)
+        return fail(`Wrong step. Complete Step ${pend.currentStep} first.`, found.data.stepsCompleted, tv.step, found.data.totalSteps);
 
-    // Valid token — serve the interactive checkpoint page
-    return res.send(checkpointPage({
+    // Valid — serve interactive page
+    return res.send(buildPage({
         state:    "verify",
         msg:      "",
         done:     found.data.stepsCompleted,
-        current:  tv.step,
-        total:    found.data.totalSteps,
+        cur:      tv.step,
+        tot:      found.data.totalSteps,
         token,
-        adsCount: CONFIG.ADS_PER_CHECKPOINT,
     }));
 });
 
-// ── POST /checkpoint/complete  (called by JS after all checks pass)
-app.post("/checkpoint/complete", async (req, res) => {
-    const { token, challengeAnswer, challengeId } = req.body || {};
+// ── GET /challenge?token=XXX — generate and return challenge ───────
+app.get("/challenge", (req, res) => {
+    const token = req.query.token || "";
+    const tv    = vtokens.get(token);
+    if (!tv || tv.used) return res.json({ ok: false, msg: "Invalid token" });
+
+    const ch = makeChallenge();
+    challenges.set(token, ch);
+    // NEVER send the answer to the client
+    res.json({ ok: true, type: ch.type, question: ch.question, data: ch.clientData });
+});
+
+// ── POST /challenge/verify — real server-side answer check ─────────
+app.post("/challenge/verify", (req, res) => {
+    const { token, answer } = req.body || {};
     if (!token) return res.json({ ok: false, msg: "Missing token" });
 
-    const tv = verifyTokens.get(token);
-    if (!tv || tv.used) return res.json({ ok: false, msg: "Invalid or already used token" });
-    if (Date.now() - tv.createdAt > CONFIG.VERIFY_TOKEN_TTL) {
-        verifyTokens.delete(token);
+    const tv = vtokens.get(token);
+    if (!tv || tv.used) return res.json({ ok: false, msg: "Invalid token" });
+
+    const ch = challenges.get(token);
+    if (!ch) return res.json({ ok: false, msg: "No challenge found — reload the page" });
+
+    const correct =
+        String(answer || "").trim().toLowerCase() ===
+        String(ch.answer).trim().toLowerCase();
+
+    if (!correct) {
+        // Generate a fresh challenge so they can't brute-force by replaying
+        const newCh = makeChallenge();
+        challenges.set(token, newCh);
+        return res.json({
+            ok:       false,
+            msg:      "Wrong answer — try again",
+            newQuestion: newCh.question,
+            newType:     newCh.type,
+            newData:     newCh.clientData,
+        });
+    }
+
+    ch.solved = true;
+    challenges.set(token, ch);
+    return res.json({ ok: true, msg: "Correct!" });
+});
+
+// ── POST /checkpoint/complete — called after all checks pass ───────
+app.post("/checkpoint/complete", async (req, res) => {
+    const { token } = req.body || {};
+    if (!token) return res.json({ ok: false, msg: "Missing token" });
+
+    const tv = vtokens.get(token);
+    if (!tv || tv.used) return res.json({ ok: false, msg: "Invalid or already-used token" });
+    if (Date.now() - tv.createdAt > CFG.TOKEN_TTL) {
+        vtokens.delete(token);
         return res.json({ ok: false, msg: "Token expired" });
     }
 
-    // Verify challenge answer server-side
-    const challenge = activeChallenges.get(token);
-    if (!challenge) return res.json({ ok: false, msg: "Challenge not found — reload the page" });
-    if (String(challengeAnswer).trim() !== String(challenge.answer).trim())
-        return res.json({ ok: false, msg: "Wrong challenge answer" });
+    // MUST have solved challenge via /challenge/verify
+    const ch = challenges.get(token);
+    if (!ch)         return res.json({ ok: false, msg: "No challenge on record — reload the page" });
+    if (!ch.solved)  return res.json({ ok: false, msg: "Challenge not verified — complete the challenge first" });
 
-    activeChallenges.delete(token);
+    const found = getUserKey(tv.userId);
+    const pend  = pending.get(tv.userId);
 
-    const found   = getUserKey(tv.userId);
-    const pending = pendingUsers.get(tv.userId);
+    if (!found || !pend) return res.json({ ok: false, msg: "Session lost — type ?getkey again" });
+    if (tv.step !== pend.currentStep) return res.json({ ok: false, msg: "Wrong step" });
 
-    if (!found || !pending) return res.json({ ok: false, msg: "Session lost — type ?getkey again" });
-    if (tv.step !== pending.currentStep) return res.json({ ok: false, msg: "Wrong step" });
-
-    // ✓ Complete step
+    // Mark used + advance
     tv.used = true;
-    verifyTokens.set(token, tv);
+    vtokens.set(token, tv);
+    challenges.delete(token);
+
     const { key, data } = found;
     data.stepsCompleted++;
     keys.set(key, data);
 
-    console.log(`[Void] ✓ Step ${data.stepsCompleted}/${data.totalSteps} complete for ${tv.userId}`);
+    console.log(`[VOID] ✓ Step ${data.stepsCompleted}/${data.totalSteps} for ${tv.userId}`);
 
+    // All steps done — activate key and DM user
     if (data.stepsCompleted >= data.totalSteps) {
-        data.expiresAt = Date.now() + (data.totalSteps * CONFIG.HOURS_PER_STEP * 3600000);
+        data.expiresAt = Date.now() + data.totalSteps * CFG.HOURS_PER_STEP * 3_600_000;
         keys.set(key, data);
-        pendingUsers.delete(tv.userId);
+        pending.delete(tv.userId);
+
         try {
             const user = await client.users.fetch(tv.userId);
-            await dmFinalKey(user, key, data.totalSteps);
-            console.log(`[Void] 🔑 Key delivered to ${user.tag}: ${key}`);
-        } catch (e) { console.error("[Void] DM error:", e.message); }
-        return res.json({ ok: true, done: true, msg: `All ${data.totalSteps} checkpoints complete! Key sent to your Discord DMs.` });
+            await user.send(makeFinalKeyDM(key, data.totalSteps));
+            console.log(`[VOID] 🔑 Key sent to ${user.tag}: ${key}`);
+        } catch (e) { console.error("[VOID] Final key DM error:", e.message); }
+
+        return res.json({
+            ok: true, done: true,
+            msg: `All ${data.totalSteps} steps complete! 🎉 Your key has been sent to your Discord DMs.`,
+        });
     }
 
-    pending.currentStep++;
-    pendingUsers.set(tv.userId, pending);
+    // More steps — send next checkpoint link
+    pend.currentStep++;
+    pending.set(tv.userId, pend);
+
     try {
         const user = await client.users.fetch(tv.userId);
-        await dmCheckpointLink(user, pending.currentStep, data.totalSteps);
-    } catch (e) { console.error("[Void] Next checkpoint DM error:", e.message); }
+        await user.send(makeCheckpointDM(user, pend.currentStep, data.totalSteps));
+    } catch (e) { console.error("[VOID] Next checkpoint DM error:", e.message); }
 
-    return res.json({ ok: true, done: false, msg: `Step ${data.stepsCompleted} complete! Check your Discord DMs for the next checkpoint.` });
+    return res.json({
+        ok: true, done: false,
+        msg: `Step ${data.stepsCompleted} complete ✓ Check your Discord DMs for the next checkpoint.`,
+    });
 });
 
-// ── GET /challenge?token=XXX  — generate + return a challenge ─
-const activeChallenges = new Map();
-
-app.get("/challenge", (req, res) => {
-    const token = req.query.token || "";
-    const tv    = verifyTokens.get(token);
-    if (!tv || tv.used) return res.json({ ok: false });
-
-    const challenge = generateChallenge();
-    activeChallenges.set(token, challenge);
-    res.json({ ok: true, type: challenge.type, question: challenge.question, data: challenge.clientData });
-});
-
-function generateChallenge() {
-    const types = ["math", "color", "word", "count", "sequence"];
-    const type  = types[Math.floor(Math.random() * types.length)];
-
-    if (type === "math") {
-        const ops = ["+", "-", "*"];
-        const op  = ops[Math.floor(Math.random() * ops.length)];
-        const a   = Math.floor(Math.random() * 20) + 1;
-        const b   = Math.floor(Math.random() * 10) + 1;
-        const answer = op === "+" ? a + b : op === "-" ? a - b : a * b;
-        return { type:"math", question:`What is ${a} ${op} ${b}?`, answer: String(answer), clientData:{} };
-    }
-
-    if (type === "color") {
-        const colors  = ["red","blue","green","yellow","purple","orange","pink","white"];
-        const target  = colors[Math.floor(Math.random() * colors.length)];
-        const options = [target];
-        while (options.length < 4) {
-            const c = colors[Math.floor(Math.random() * colors.length)];
-            if (!options.includes(c)) options.push(c);
-        }
-        options.sort(() => Math.random() - 0.5);
-        return { type:"color", question:`Click the button that says: <strong style="color:${target}">${target.toUpperCase()}</strong>`, answer: target, clientData:{ options } };
-    }
-
-    if (type === "word") {
-        const words   = ["VOID","VERIFY","ACCESS","SECURE","TOKEN","SHIELD","VAULT","CIPHER"];
-        const target  = words[Math.floor(Math.random() * words.length)];
-        const jumbled = target.split("").sort(() => Math.random() - 0.5).join("");
-        return { type:"word", question:`Unscramble and type: <strong>${jumbled}</strong>`, answer: target, clientData:{} };
-    }
-
-    if (type === "count") {
-        const n      = Math.floor(Math.random() * 7) + 3;
-        const emoji  = ["⭐","🔵","🟣","🔷","💎","🌀"][Math.floor(Math.random()*6)];
-        return { type:"count", question:`How many ${emoji} do you see? &nbsp; ${emoji.repeat(n)}`, answer: String(n), clientData:{} };
-    }
-
-    if (type === "sequence") {
-        const start = Math.floor(Math.random() * 5) + 1;
-        const step  = Math.floor(Math.random() * 3) + 1;
-        const seq   = [start, start+step, start+step*2, start+step*3];
-        return { type:"sequence", question:`What comes next? &nbsp; <strong>${seq.join(", ")}, ?</strong>`, answer: String(start+step*4), clientData:{} };
-    }
-}
-
-// ── GET /validate?key=VOID-XXXX ───────────────────────────────
+// ── GET /validate?key=VOID-XXXX ────────────────────────────────────
 app.get("/validate", (req, res) => {
     const ip  = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").split(",")[0].trim();
     const key = (req.query.key || "").toUpperCase().trim();
 
-    if (isBlocked(ip))         return res.json({ valid:false, message:"Too many failed attempts. Try again later." });
-    if (!key)                  { recordFail(ip); return res.json({ valid:false, message:"No key provided" }); }
-    if (!verifyKeyHmac(key))   { recordFail(ip); return res.json({ valid:false, message:"Invalid key format" }); }
+    if (ipBlocked(ip))        return res.json({ valid: false, message: "Rate limited — too many failed attempts" });
+    if (!key)                 { recordFail(ip); return res.json({ valid: false, message: "No key provided" }); }
+    if (!validKeyHmac(key))   { recordFail(ip); return res.json({ valid: false, message: "Invalid key format" }); }
 
     const data = keys.get(key);
-    if (!data)                 { recordFail(ip); return res.json({ valid:false, message:"Key not found" }); }
-    if (data.blocked)          return res.json({ valid:false, message:"Key revoked" });
-    if (data.expiresAt === 0)  return res.json({ valid:false, message:"Key not activated — complete checkpoints first" });
-    if (Date.now() > data.expiresAt) return res.json({ valid:false, message:"Key expired — type ?getkey for a new one" });
+    if (!data)                { recordFail(ip); return res.json({ valid: false, message: "Key not found" }); }
+    if (data.blocked)         return res.json({ valid: false, message: "Key has been revoked" });
+    if (data.expiresAt === 0) return res.json({ valid: false, message: "Key not activated — complete your checkpoints first" });
+    if (Date.now() > data.expiresAt) return res.json({ valid: false, message: "Key expired — type ?getkey in Discord" });
 
-    const timeLeft = msToHuman(data.expiresAt - Date.now());
-    console.log(`[Void] ✓ Validated: ${key} (${timeLeft} left)`);
-    return res.json({ valid:true, message:"Access granted", userId:data.userId, expiresIn:timeLeft, expiresAt:data.expiresAt, steps:data.totalSteps });
+    const timeLeft = fmt(data.expiresAt - Date.now());
+    console.log(`[VOID] ✓ Validated: ${key} (${timeLeft} left)`);
+    return res.json({ valid: true, message: "Access granted", userId: data.userId, expiresIn: timeLeft, expiresAt: data.expiresAt, steps: data.totalSteps });
 });
 
-app.get("/", (req, res) => {
-    res.json({ status:"ok", totalKeys:keys.size, activeKeys:[...keys.values()].filter(d=>!d.blocked&&d.expiresAt>Date.now()).length, pendingApprovals:approvalQueue.size });
+// ── GET /  health ──────────────────────────────────────────────────
+app.get("/", (_req, res) => {
+    res.json({
+        status:    "ok",
+        totalKeys: keys.size,
+        active:    [...keys.values()].filter(d => !d.blocked && d.expiresAt > Date.now()).length,
+        pending:   approvals.size,
+    });
 });
 
-// ═══════════════════════════════════════════════════════════════
-//  CHECKPOINT PAGE HTML
-//  Full interactive page:
-//  1. Ad blocker detection
-//  2. Random challenge (fetched from /challenge)
-//  3. Sequential ad watching (N ads, max 30s each)
-//  4. POST to /checkpoint/complete when all done
-// ═══════════════════════════════════════════════════════════════
-function checkpointPage({ state, msg, done, current, total, token, adsCount }) {
+// ═══════════════════════════════════════════════════════════════════
+//  CHECKPOINT PAGE
+//  Three stages executed in sequence:
+//  Stage 1 — Ad-block detection + Challenge  (server-verified)
+//  Stage 2 — Watch ads  (N ads, 10-30s each, skip after 5s)
+//  Stage 3 — Confirm    (POST /checkpoint/complete)
+// ═══════════════════════════════════════════════════════════════════
+function buildPage({ state, msg, done, cur, tot, token }) {
 
-    const stepsHtml = Array.from({ length: total }, (_, i) => {
+    // Step progress circles
+    const circles = Array.from({ length: tot }, (_, i) => {
         const n   = i + 1;
-        const cls = n < current || (n === current && (state === "success" || state === "complete"))
-            ? "done" : n === current ? "active" : "locked";
+        const cls = n < cur || (n === cur && (state==="success"||state==="complete")) ? "done"
+                  : n === cur ? "active" : "locked";
         return `
         <div class="step ${cls}">
-            <div class="sc">${cls === "done" ? "✓" : n}</div>
-            <div class="sl">Step ${n}<br><span>${n * 24}h</span></div>
-        </div>
-        ${n < total ? '<div class="ln"></div>' : ""}`;
+          <div class="sc">${cls==="done"?"✓":n}</div>
+          <div class="sl">Step ${n}<br><span>${n*24}h</span></div>
+        </div>${n<tot?'<div class="ln"></div>':""}`;
     }).join("");
 
-    // For error/complete states just show a message card
+    // Error / complete states — static page
     if (state !== "verify") {
-        const col = { success:"#a855f7", complete:"#22c55e", error:"#ef4444" }[state] || "#c4b5fd";
+        const col = state==="complete" ? "#22c55e" : state==="success" ? "#a855f7" : "#ef4444";
         return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8">
-<meta name="viewport" content="width=device-width,initial-scale=1"><title>VOID — Checkpoint</title>
-<style>${baseCSS()}</style></head><body>
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>VOID — Checkpoint</title><style>${css()}</style></head><body>
 <div class="card">
-  <div class="logo">◈</div><h1>VOID</h1><p class="sub">CHECKPOINT VERIFICATION</p>
-  <div class="steps">${stepsHtml}</div>
-  <div class="msg" style="color:${col};border-color:${col}30;background:${col}0d">${msg}</div>
-  <a href="javascript:window.close()" class="btn">CLOSE WINDOW</a>
+  <div class="logo">◈</div><h1>VOID</h1>
+  <p class="sub">CHECKPOINT ${cur} / ${tot}</p>
+  <div class="steps">${circles}</div>
+  <div class="msg" style="color:${col};border-color:${col}28;background:${col}0c">${msg}</div>
+  <a href="javascript:window.close()" class="btn">Close Window</a>
   <p class="footer">VOID KEY SYSTEM &nbsp;·&nbsp; DO NOT SHARE YOUR LINKS</p>
 </div></body></html>`;
     }
@@ -972,119 +1071,92 @@ function checkpointPage({ state, msg, done, current, total, token, adsCount }) {
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
-<title>VOID — Checkpoint ${current}/${total}</title>
+<title>VOID — Checkpoint ${cur}/${tot}</title>
 <style>
-${baseCSS()}
-/* ── Stages ─────────────────────────────── */
-.stage { display:none }
-.stage.active { display:block }
-/* ── Ad player ──────────────────────────── */
-.ad-box {
-  background:#0a0817;border:1px solid #2a1f45;border-radius:16px;
-  padding:24px;margin:20px 0;text-align:center;position:relative;
-}
-.ad-screen {
-  width:100%;height:180px;background:#000;border-radius:10px;
-  display:flex;align-items:center;justify-content:center;
-  position:relative;overflow:hidden;margin-bottom:14px;
-  border:1px solid #1a1030;
-}
-.ad-visual {
-  width:100%;height:100%;display:flex;align-items:center;justify-content:center;
-  flex-direction:column;gap:8px;
-}
-.ad-timer {
-  position:absolute;top:8px;right:10px;
-  background:#00000090;color:#fff;font-size:11px;
-  padding:3px 8px;border-radius:6px;font-weight:bold;
-}
-.ad-skip {
-  background:#1a1030;border:1px solid #3d2f60;color:#a89dc0;
-  padding:8px 20px;border-radius:8px;font-size:11px;cursor:default;
-  opacity:0.5;transition:.3s;
-}
-.ad-skip.ready { opacity:1;cursor:pointer;background:#5b21b6;color:#f3e8ff;border-color:#7c3aed; }
-.ad-skip.ready:hover { background:#7c3aed; }
-.ad-progress-bar { width:100%;height:3px;background:#1a1030;border-radius:2px;margin-top:10px;overflow:hidden; }
-.ad-progress-fill { height:100%;background:linear-gradient(90deg,#7c3aed,#a855f7);transition:width .5s linear; }
-/* ── Challenge ──────────────────────────── */
-.challenge-box { background:#0a0817;border:1px solid #2a1f45;border-radius:16px;padding:24px;margin:20px 0; }
-.challenge-q { font-size:14px;color:#c4b5fd;margin-bottom:16px;line-height:1.6; }
-.challenge-input { width:100%;background:#100d1e;border:1px solid #2a1f45;border-radius:10px;color:#e2d9f3;
-  padding:10px 14px;font-size:14px;outline:none; }
-.challenge-input:focus { border-color:#7c3aed; }
-.color-btns { display:flex;flex-wrap:wrap;gap:8px;justify-content:center; }
-.color-btn { padding:10px 20px;border-radius:8px;border:1px solid #3d2f60;background:#1a1030;
-  color:#a89dc0;cursor:pointer;font-size:12px;transition:.2s;font-weight:bold; }
-.color-btn:hover { border-color:#7c3aed;color:#c4b5fd; }
-/* ── Status ─────────────────────────────── */
-.status-ok  { color:#22c55e;font-size:12px;margin-top:6px; }
-.status-err { color:#ef4444;font-size:12px;margin-top:6px; }
-.status-info{ color:#a855f7;font-size:12px;margin-top:6px; }
-.section-title { color:#5a3890;font-size:10px;letter-spacing:3px;text-transform:uppercase;margin-bottom:12px; }
-/* ── Adblock warning ────────────────────── */
-.adblock-warn { background:#2a0f14;border:1px solid #7f1d1d;border-radius:14px;
-  padding:18px 20px;margin:20px 0;color:#f87171;font-size:13px;line-height:1.7;display:none; }
+${css()}
+.stage{display:none}.stage.on{display:block}
+.box{background:#08061a;border:1px solid #2a1f45;border-radius:14px;padding:22px;margin:14px 0}
+.lbl{color:#3d2f60;font-size:9px;letter-spacing:3px;text-transform:uppercase;margin-bottom:10px}
+.qtext{color:#c4b5fd;font-size:14px;line-height:1.7;margin-bottom:16px}
+.inp{width:100%;background:#0f0c1e;border:1px solid #2a1f45;border-radius:9px;
+     color:#e2d9f3;padding:10px 14px;font-size:14px;outline:none;transition:.2s}
+.inp:focus{border-color:#7c3aed}
+.cbts{display:flex;flex-wrap:wrap;gap:8px;justify-content:center}
+.cbt{padding:9px 18px;border-radius:8px;border:1px solid #2a1f45;background:#0f0c1e;
+     color:#a89dc0;cursor:pointer;font-size:12px;font-weight:bold;transition:.2s}
+.cbt:hover{border-color:#7c3aed;color:#c4b5fd}
+.cbt.sel{border-color:#a855f7;background:#2d1a60;color:#f3e8ff}
+.ok{color:#22c55e;font-size:12px;margin-top:8px}
+.err{color:#ef4444;font-size:12px;margin-top:8px}
+.inf{color:#a855f7;font-size:12px;margin-top:8px}
+.adscreen{width:100%;height:160px;background:#000;border-radius:10px;display:flex;
+          align-items:center;justify-content:center;flex-direction:column;gap:8px;
+          margin-bottom:12px;border:1px solid #1a1030;position:relative;overflow:hidden}
+.adtimer{position:absolute;top:8px;right:10px;background:#00000090;color:#fff;
+         font-size:11px;padding:3px 8px;border-radius:6px;font-weight:bold}
+.adtrack{width:100%;height:3px;background:#1a1030;border-radius:2px;margin:8px 0;overflow:hidden}
+.adfill{height:100%;background:linear-gradient(90deg,#7c3aed,#a855f7);transition:width .5s linear}
+.skipbtn{background:#1a1030;border:1px solid #2a1f45;color:#5a4870;padding:8px 20px;
+         border-radius:8px;font-size:11px;cursor:default;transition:.25s;margin-top:8px}
+.skipbtn.rdy{background:#5b21b6;border-color:#7c3aed;color:#f3e8ff;cursor:pointer}
+.skipbtn.rdy:hover{background:#7c3aed}
+.adblock{background:#2a0f14;border:1px solid #7f1d1d;border-radius:12px;padding:16px 18px;
+         color:#f87171;font-size:13px;line-height:1.7;margin-bottom:14px;display:none}
 </style>
 </head>
 <body>
-<div class="card" style="max-width:520px">
+<div class="card" style="max-width:500px">
   <div class="logo">◈</div>
   <h1>VOID</h1>
-  <p class="sub">CHECKPOINT ${current} / ${total}</p>
-  <div class="steps">${stepsHtml}</div>
+  <p class="sub">CHECKPOINT ${cur} / ${tot}</p>
+  <div class="steps">${circles}</div>
 
-  <!-- Ad blocker warning (shown if ad blocker detected) -->
-  <div class="adblock-warn" id="adblockWarn">
+  <!-- Ad-blocker warning -->
+  <div class="adblock" id="abWarn">
     🚫 <strong>Ad blocker detected!</strong><br>
-    You must disable your ad blocker to complete this checkpoint.<br>
-    Disable it, then <a href="" style="color:#f87171">refresh this page</a>.
+    Disable your ad blocker, then <a href="" style="color:#f87171">refresh this page</a>.
   </div>
 
-  <!-- STAGE 1: Challenge -->
-  <div class="stage active" id="stage-challenge">
-    <p class="section-title">Step 1 of 3 &nbsp;—&nbsp; Verification Challenge</p>
-    <div class="challenge-box" id="challengeBox">
-      <p class="challenge-q" id="challengeQ">Loading challenge…</p>
-      <div id="challengeInput"></div>
-      <p id="challengeStatus" class="status-info"></p>
+  <!-- Stage 1: Challenge -->
+  <div class="stage on" id="s1">
+    <div class="box">
+      <div class="lbl">Step 1 of 3 — Verification Challenge</div>
+      <div class="qtext" id="qtext">Loading…</div>
+      <div id="qinput"></div>
+      <div id="qst" class="inf"></div>
     </div>
-    <button class="btn" id="challengeBtn" onclick="submitChallenge()" disabled>Verify Answer</button>
+    <button class="btn" id="chkBtn" onclick="submitChallenge()" disabled>Verify Answer</button>
   </div>
 
-  <!-- STAGE 2: Ads -->
-  <div class="stage" id="stage-ads">
-    <p class="section-title" id="adStageTitle">Step 2 of 3 &nbsp;—&nbsp; Watch Ad <span id="adNum">1</span> / ${adsCount}</p>
-    <div class="ad-box">
-      <div class="ad-screen">
-        <div class="ad-visual" id="adVisual"></div>
-        <div class="ad-timer" id="adTimer">0s</div>
-      </div>
-      <div class="ad-progress-bar"><div class="ad-progress-fill" id="adProgressFill" style="width:0%"></div></div>
-      <p id="adStatus" class="status-info" style="margin-top:10px">Preparing ad…</p>
-      <br>
-      <button class="ad-skip" id="adSkipBtn" onclick="skipAd()">Skip Ad ›</button>
+  <!-- Stage 2: Ads -->
+  <div class="stage" id="s2">
+    <div class="box">
+      <div class="lbl" id="adlbl">Step 2 of 3 — Ad <span id="adN">1</span> / ${CFG.ADS}</div>
+      <div class="adscreen"><div id="adviz"></div><div class="adtimer" id="adtimer">…</div></div>
+      <div class="adtrack"><div class="adfill" id="adfill" style="width:0%"></div></div>
+      <div id="adst" class="inf">Preparing…</div><br>
+      <button class="skipbtn" id="skipbtn" onclick="skipAd()">Skip ›</button>
     </div>
   </div>
 
-  <!-- STAGE 3: Confirm -->
-  <div class="stage" id="stage-confirm">
-    <p class="section-title">Step 3 of 3 &nbsp;—&nbsp; Complete</p>
-    <div class="challenge-box">
-      <p style="color:#a89dc0;font-size:13px;margin-bottom:16px">
-        ✓ Challenge passed &nbsp;|&nbsp; ✓ Ads watched<br><br>
-        Click below to complete this checkpoint.
+  <!-- Stage 3: Confirm -->
+  <div class="stage" id="s3">
+    <div class="box">
+      <div class="lbl">Step 3 of 3 — Complete</div>
+      <p style="color:#a89dc0;font-size:13px;line-height:1.8">
+        ✓ Challenge verified &nbsp;|&nbsp; ✓ Ads watched<br><br>
+        Click below to complete Checkpoint ${cur}.
       </p>
-      <p id="confirmStatus" class="status-info"></p>
+      <div id="cst" class="inf"></div>
     </div>
-    <button class="btn" id="confirmBtn" onclick="completeCheckpoint()">Complete Checkpoint ${current}</button>
+    <button class="btn" id="cmpBtn" onclick="complete()">Complete Checkpoint ${cur}</button>
   </div>
 
-  <!-- STAGE 4: Done -->
-  <div class="stage" id="stage-done">
-    <div class="challenge-box" style="text-align:center">
-      <p style="font-size:32px;margin-bottom:12px">🎉</p>
-      <p id="doneMsg" style="color:#22c55e;font-size:14px;line-height:1.7"></p>
+  <!-- Stage 4: Done -->
+  <div class="stage" id="s4">
+    <div class="box" style="text-align:center">
+      <div style="font-size:36px;margin-bottom:10px">🎉</div>
+      <div id="doneMsg" style="color:#22c55e;font-size:13px;line-height:1.8"></div>
     </div>
     <a href="javascript:window.close()" class="btn">Close Window</a>
   </div>
@@ -1093,294 +1165,355 @@ ${baseCSS()}
 </div>
 
 <script>
-const TOKEN    = ${JSON.stringify(token)};
-const ADS      = ${adsCount};
-const BASE     = ${JSON.stringify(CONFIG.BASE_URL)};
+const TOKEN = ${JSON.stringify(token)};
+const ADS   = ${CFG.ADS};
+const BASE  = ${JSON.stringify(CFG.BASE_URL)};
 
-let challengeType   = "";
-let challengeAnswer = "";
-let challengePassed = false;
-let adsPassed       = false;
-let currentAd       = 1;
-let adTimer         = null;
-let adSecondsLeft   = 0;
-let adLength        = 0;
-let skipReady       = false;
+let curAns  = "";   // stores what user typed/clicked
+let chkPass = false;
+let adsDone = false;
+let curAd   = 1;
+let adInt   = null;
+let skipRdy = false;
 
-// ── Ad blocker detection ────────────────────────────────────
-function checkAdBlock() {
-  return new Promise(resolve => {
-    const s = document.createElement("script");
-    s.src   = BASE + "/ads/ads.js?t=" + Date.now();
-    s.onload  = () => resolve(false);
-    s.onerror = () => resolve(true);
-    document.head.appendChild(s);
-    setTimeout(() => resolve(!window.__adCheckPassed), 2000);
-  });
+// ── Ad-block detection ────────────────────────────────────────────
+async function checkAdBlock() {
+    return new Promise(res => {
+        const s  = document.createElement("script");
+        s.src    = BASE + "/ads/ads.js?_=" + Date.now();
+        s.onload = () => res(false);
+        s.onerror= () => res(true);
+        document.head.appendChild(s);
+        setTimeout(() => res(!window.__adBlockOff), 2500);
+    });
 }
 
-async function init() {
-  const blocked = await checkAdBlock();
-  if (blocked) {
-    document.getElementById("adblockWarn").style.display = "block";
-    document.getElementById("stage-challenge").classList.remove("active");
-    return;
-  }
-  loadChallenge();
+async function boot() {
+    if (await checkAdBlock()) {
+        document.getElementById("abWarn").style.display = "block";
+        document.getElementById("s1").classList.remove("on");
+        return;
+    }
+    loadChallenge();
 }
 
-// ── Challenge ───────────────────────────────────────────────
-async function loadChallenge() {
-  const r    = await fetch(BASE + "/challenge?token=" + TOKEN).then(x => x.json()).catch(() => null);
-  if (!r || !r.ok) {
-    document.getElementById("challengeQ").innerHTML = "Failed to load challenge. Please reload.";
-    return;
-  }
-  challengeType = r.type;
-  document.getElementById("challengeQ").innerHTML = r.question;
-  const inp = document.getElementById("challengeInput");
+// ── Challenge ─────────────────────────────────────────────────────
+async function loadChallenge(data) {
+    const r = data || await fetch(BASE + "/challenge?token=" + TOKEN).then(x=>x.json()).catch(()=>null);
+    if (!r || !r.ok) {
+        document.getElementById("qtext").innerHTML = "Failed to load challenge. Please reload.";
+        return;
+    }
 
-  if (r.type === "color") {
-    const wrap = document.createElement("div");
-    wrap.className = "color-btns";
-    r.data.options.forEach(opt => {
-      const b = document.createElement("button");
-      b.className = "color-btn";
-      b.textContent = opt.toUpperCase();
-      b.onclick = () => { challengeAnswer = opt; document.querySelectorAll(".color-btn").forEach(x=>x.style.borderColor=""); b.style.borderColor="#7c3aed"; document.getElementById("challengeBtn").disabled = false; };
-      wrap.appendChild(b);
-    });
-    inp.appendChild(wrap);
-  } else {
-    const input = document.createElement("input");
-    input.className = "challenge-input";
-    input.placeholder = r.type === "math" ? "Enter the number" : r.type === "word" ? "Type the word" : r.type === "count" ? "Count and enter" : "Enter the answer";
-    input.addEventListener("input", () => {
-      challengeAnswer = input.value;
-      document.getElementById("challengeBtn").disabled = input.value.trim() === "";
-    });
-    input.addEventListener("keydown", e => { if(e.key==="Enter" && input.value.trim()) submitChallenge(); });
-    inp.appendChild(input);
-  }
-  document.getElementById("challengeBtn").disabled = false;
+    document.getElementById("qtext").innerHTML = r.question;
+    document.getElementById("qst").textContent = "";
+    curAns = "";
+
+    const wrap = document.getElementById("qinput");
+    wrap.innerHTML = "";
+    document.getElementById("chkBtn").disabled   = true;
+    document.getElementById("chkBtn").textContent = "Verify Answer";
+
+    if (r.type === "color") {
+        const d = document.createElement("div");
+        d.className = "cbts";
+        r.data.opts.forEach(o => {
+            const b = document.createElement("button");
+            b.className   = "cbt";
+            b.textContent = o.toUpperCase();
+            b.onclick = () => {
+                document.querySelectorAll(".cbt").forEach(x => x.classList.remove("sel"));
+                b.classList.add("sel");
+                curAns = o;
+                document.getElementById("chkBtn").disabled = false;
+            };
+            d.appendChild(b);
+        });
+        wrap.appendChild(d);
+    } else {
+        const input = document.createElement("input");
+        input.className   = "inp";
+        input.placeholder = r.type==="math" ? "Enter number" : r.type==="word" ? "Type the word" : "Your answer";
+        input.oninput = () => {
+            curAns = input.value;
+            document.getElementById("chkBtn").disabled = input.value.trim() === "";
+        };
+        input.onkeydown = e => { if (e.key === "Enter" && curAns.trim()) submitChallenge(); };
+        wrap.appendChild(input);
+        setTimeout(() => input.focus(), 100);
+    }
 }
 
 async function submitChallenge() {
-  const btn = document.getElementById("challengeBtn");
-  btn.disabled = true;
-  const st  = document.getElementById("challengeStatus");
-  const ans = String(challengeAnswer || "").trim();
-  if (!ans) { st.textContent = "Please enter an answer."; st.className="status-err"; btn.disabled=false; return; }
+    const btn = document.getElementById("chkBtn");
+    const st  = document.getElementById("qst");
+    btn.disabled    = true;
+    btn.textContent = "Checking…";
+    st.textContent  = "";
+    st.className    = "inf";
 
-  // Server validates
-  const r = await fetch(BASE + "/challenge?token=" + TOKEN + "&answer=" + encodeURIComponent(ans)).then(()=>null).catch(()=>null);
+    if (!curAns.trim()) {
+        st.textContent  = "Please enter an answer.";
+        st.className    = "err";
+        btn.disabled    = false;
+        btn.textContent = "Verify Answer";
+        return;
+    }
 
-  // For real validation we'll do it in /checkpoint/complete — just store locally
-  challengePassed = true;
-  st.textContent  = "✓ Challenge complete!";
-  st.className    = "status-ok";
-  setTimeout(() => goToAds(), 800);
+    let r = null;
+    try {
+        r = await fetch(BASE + "/challenge/verify", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ token: TOKEN, answer: curAns.trim() }),
+        }).then(x => x.json());
+    } catch {
+        st.textContent  = "❌ Network error. Try again.";
+        st.className    = "err";
+        btn.disabled    = false;
+        btn.textContent = "Verify Answer";
+        return;
+    }
+
+    if (!r.ok) {
+        // Server rejected — show error, reset with new challenge
+        st.textContent  = "❌ " + r.msg;
+        st.className    = "err";
+        btn.disabled    = false;
+        btn.textContent = "Verify Answer";
+        if (r.newQuestion) {
+            // Server sent a fresh challenge inline — load it
+            await loadChallenge({ ok:true, type:r.newType, question:r.newQuestion, data:r.newData });
+        }
+        return;
+    }
+
+    chkPass = true;
+    st.textContent  = "✓ Correct!";
+    st.className    = "ok";
+    btn.textContent = "✓ Verified";
+    setTimeout(() => {
+        document.getElementById("s1").classList.remove("on");
+        document.getElementById("s2").classList.add("on");
+        playAd(1);
+    }, 700);
 }
 
-// ── Ads ─────────────────────────────────────────────────────
-const adThemes = [
-  { bg:"linear-gradient(135deg,#1a0a30,#0d1a3a)", icon:"🚀", title:"VOID PREMIUM", desc:"Upgrade your access today" },
-  { bg:"linear-gradient(135deg,#0d1a0d,#1a2d0a)", icon:"🛡️", title:"VOID SECURITY", desc:"Military-grade protection" },
-  { bg:"linear-gradient(135deg,#1a0d1a,#2d0a2d)", icon:"💎", title:"VOID ELITE",    desc:"Exclusive script access" },
-  { bg:"linear-gradient(135deg,#1a1a0a,#2d2a0d)", icon:"⚡", title:"VOID SPEED",    desc:"Zero-lag execution" },
-  { bg:"linear-gradient(135deg,#0a1a1a,#0d2d2a)", icon:"🔑", title:"VOID KEYS",    desc:"Secure key distribution" },
-  { bg:"linear-gradient(135deg,#1a0a0a,#2d100d)", icon:"🌐", title:"VOID NETWORK",  desc:"Global script network" },
+// ── Ads ───────────────────────────────────────────────────────────
+const themes = [
+    { bg:"linear-gradient(135deg,#1a0a30,#0d1a3a)", icon:"🚀", name:"VOID PREMIUM",  tag:"Upgrade your access" },
+    { bg:"linear-gradient(135deg,#0d1a0d,#1a2d0a)", icon:"🛡️", name:"VOID SECURITY", tag:"Military-grade protection" },
+    { bg:"linear-gradient(135deg,#1a0d1a,#2d0a2d)", icon:"💎", name:"VOID ELITE",    tag:"Exclusive access" },
+    { bg:"linear-gradient(135deg,#1a1a0a,#2d2a0d)", icon:"⚡", name:"VOID SPEED",    tag:"Zero-lag execution" },
+    { bg:"linear-gradient(135deg,#0a1a1a,#0d2d2a)", icon:"🔑", name:"VOID KEYS",     tag:"Secure key distribution" },
+    { bg:"linear-gradient(135deg,#1a0a0a,#2d100d)", icon:"🌐", name:"VOID NETWORK",  tag:"Global script network" },
 ];
 
-function goToAds() {
-  document.getElementById("stage-challenge").classList.remove("active");
-  document.getElementById("stage-ads").classList.add("active");
-  playAd(1);
-}
-
 function playAd(n) {
-  currentAd     = n;
-  skipReady     = false;
-  adSecondsLeft = Math.floor(Math.random() * 21) + 10; // 10–30s random
-  adLength      = adSecondsLeft;
+    curAd   = n;
+    skipRdy = false;
 
-  document.getElementById("adNum").textContent       = n;
-  document.getElementById("adSkipBtn").className     = "ad-skip";
-  document.getElementById("adSkipBtn").textContent   = "Skip Ad ›";
-  document.getElementById("adProgressFill").style.width = "0%";
+    const len  = Math.floor(Math.random() * 21) + 10; // 10–30s
+    let   secs = len;
 
-  const theme  = adThemes[Math.floor(Math.random() * adThemes.length)];
-  const visual = document.getElementById("adVisual");
-  visual.style.background = theme.bg;
-  visual.innerHTML = \`
-    <span style="font-size:40px">\${theme.icon}</span>
-    <div style="color:#e2d9f3;font-size:16px;font-weight:bold;letter-spacing:4px">\${theme.title}</div>
-    <div style="color:#8b7aaa;font-size:11px">\${theme.desc}</div>
-  \`;
+    document.getElementById("adN").textContent        = n;
+    document.getElementById("adfill").style.width     = "0%";
+    document.getElementById("skipbtn").className      = "skipbtn";
+    document.getElementById("skipbtn").textContent    = "Skip ›";
+    document.getElementById("adst").textContent       = \`Ad \${n} of \${ADS} — must watch 5s before skipping\`;
 
-  document.getElementById("adStatus").textContent = \`Ad \${n} of \${ADS} — watch until you can skip\`;
+    const t = themes[Math.floor(Math.random() * themes.length)];
+    const v = document.getElementById("advis" + "z" || "advis");
+    const adv = document.getElementById("adv" + "iz" || "adviz");
+    document.getElementById("adv" + "iz".split("").reverse().join("") ||"adviz");
 
-  if (adTimer) clearInterval(adTimer);
-  adTimer = setInterval(() => {
-    adSecondsLeft--;
-    const elapsed  = adLength - adSecondsLeft;
-    const pct      = Math.min(100, (elapsed / adLength) * 100);
-    document.getElementById("adTimer").textContent       = adSecondsLeft + "s";
-    document.getElementById("adProgressFill").style.width = pct + "%";
-
-    // Can skip after 5s
-    if (adSecondsLeft <= adLength - 5 && !skipReady) {
-      skipReady = true;
-      const btn = document.getElementById("adSkipBtn");
-      btn.classList.add("ready");
-      btn.textContent = "Skip Ad ›";
+    // Target the correct element id
+    const vizEl = document.getElementById("adv" + ["i","z"].join(""));
+    if (vizEl) {
+        vizEl.style.background = t.bg;
+        vizEl.innerHTML = \`<span style="font-size:38px">\${t.icon}</span>
+        <div style="color:#e2d9f3;font-size:15px;font-weight:900;letter-spacing:5px">\${t.name}</div>
+        <div style="color:#8b7aaa;font-size:10px">\${t.tag}</div>\`;
     }
 
-    if (adSecondsLeft <= 0) {
-      clearInterval(adTimer);
-      adDone();
-    }
-  }, 1000);
+    if (adInt) clearInterval(adInt);
+    adInt = setInterval(() => {
+        secs--;
+        const pct = ((len - secs) / len) * 100;
+        document.getElementById("adtimer").textContent    = secs + "s";
+        document.getElementById("adfill").style.width     = pct + "%";
+
+        if (len - secs >= 5 && !skipRdy) {
+            skipRdy = true;
+            const sb = document.getElementById("skipbtn");
+            sb.classList.add("rdy");
+            sb.textContent = "Skip Ad ›";
+        }
+
+        if (secs <= 0) { clearInterval(adInt); finishAd(); }
+    }, 1000);
 }
 
 function skipAd() {
-  if (!skipReady) return;
-  clearInterval(adTimer);
-  adDone();
+    if (!skipRdy) return;
+    clearInterval(adInt);
+    finishAd();
 }
 
-function adDone() {
-  document.getElementById("adStatus").textContent = \`✓ Ad \${currentAd} complete!\`;
-  if (currentAd < ADS) {
-    setTimeout(() => playAd(currentAd + 1), 1200);
-  } else {
-    adsPassed = true;
-    setTimeout(() => {
-      document.getElementById("stage-ads").classList.remove("active");
-      document.getElementById("stage-confirm").classList.add("active");
-    }, 1000);
-  }
-}
-
-// ── Complete checkpoint ─────────────────────────────────────
-async function completeCheckpoint() {
-  const btn = document.getElementById("confirmBtn");
-  const st  = document.getElementById("confirmStatus");
-  btn.disabled  = true;
-  btn.textContent = "Submitting…";
-  st.textContent  = "Verifying…";
-  st.className    = "status-info";
-
-  try {
-    const r = await fetch(BASE + "/checkpoint/complete", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ token: TOKEN, challengeAnswer, challengeId: "" })
-    }).then(x => x.json());
-
-    if (r.ok) {
-      document.getElementById("stage-confirm").classList.remove("active");
-      document.getElementById("stage-done").classList.add("active");
-      document.getElementById("doneMsg").innerHTML = r.msg;
+function finishAd() {
+    document.getElementById("adst").textContent = \`✓ Ad \${curAd} complete\`;
+    if (curAd < ADS) {
+        setTimeout(() => playAd(curAd + 1), 1000);
     } else {
-      st.textContent = "❌ " + r.msg;
-      st.className   = "status-err";
-      btn.disabled   = false;
-      btn.textContent = "Complete Checkpoint ${current}";
+        adsDone = true;
+        setTimeout(() => {
+            document.getElementById("s2").classList.remove("on");
+            document.getElementById("s3").classList.add("on");
+        }, 800);
     }
-  } catch (e) {
-    st.textContent = "❌ Network error. Try again.";
-    st.className   = "status-err";
-    btn.disabled   = false;
-    btn.textContent = "Complete Checkpoint ${current}";
-  }
 }
 
-init();
+// ── Complete ──────────────────────────────────────────────────────
+async function complete() {
+    const btn = document.getElementById("cmpBtn");
+    const st  = document.getElementById("cst");
+    btn.disabled    = true;
+    btn.textContent = "Submitting…";
+    st.textContent  = ""; st.className = "inf";
+
+    let r = null;
+    try {
+        r = await fetch(BASE + "/checkpoint/complete", {
+            method:  "POST",
+            headers: { "Content-Type": "application/json" },
+            body:    JSON.stringify({ token: TOKEN }),
+        }).then(x => x.json());
+    } catch {
+        st.textContent  = "❌ Network error. Try again.";
+        st.className    = "err";
+        btn.disabled    = false;
+        btn.textContent = "Complete Checkpoint ${cur}";
+        return;
+    }
+
+    if (!r.ok) {
+        st.textContent  = "❌ " + r.msg;
+        st.className    = "err";
+        btn.disabled    = false;
+        btn.textContent = "Complete Checkpoint ${cur}";
+        return;
+    }
+
+    document.getElementById("s3").classList.remove("on");
+    document.getElementById("s4").classList.add("on");
+    document.getElementById("doneMsg").innerHTML = r.msg;
+}
+
+// Fix adviz reference then boot
+window.addEventListener("DOMContentLoaded", () => {
+    const el = document.getElementById("adv" + "iz".split("").join(""));
+    boot();
+});
 </script>
 </body>
 </html>`;
 }
 
-function baseCSS() {
+// Shared CSS
+function css() {
     return `
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#04030a;color:#a89dc0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:20px;background-image:radial-gradient(ellipse at 50% 0%,#1a0a3018 0%,transparent 70%)}
-.card{background:linear-gradient(145deg,#0f0c1c,#080614);border:1px solid #2a1f45;border-radius:24px;padding:40px 36px;max-width:480px;width:100%;text-align:center;box-shadow:0 0 100px #6d28d912,0 0 40px #00000060;position:relative;overflow:hidden}
-.card::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;background:linear-gradient(90deg,transparent,#7c3aed50,transparent)}
-.logo{font-size:48px;color:#7c3aed;margin-bottom:10px;filter:drop-shadow(0 0 16px #7c3aed55)}
+body{background:#04030a;color:#a89dc0;font-family:'Segoe UI',system-ui,sans-serif;min-height:100vh;
+     display:flex;align-items:center;justify-content:center;padding:20px;
+     background-image:radial-gradient(ellipse at 50% 0%,#1a0a3014 0%,transparent 70%)}
+.card{background:linear-gradient(145deg,#0f0c1c,#070512);border:1px solid #2a1f45;
+      border-radius:22px;padding:40px 34px;max-width:480px;width:100%;text-align:center;
+      box-shadow:0 0 80px #6d28d910,0 0 30px #00000050;position:relative;overflow:hidden}
+.card::before{content:'';position:absolute;top:0;left:10%;right:10%;height:1px;
+              background:linear-gradient(90deg,transparent,#7c3aed45,transparent)}
+.logo{font-size:46px;color:#7c3aed;margin-bottom:10px;filter:drop-shadow(0 0 14px #7c3aed50)}
 h1{color:#e2d9f3;font-size:20px;letter-spacing:10px;font-weight:900;margin-bottom:4px}
-.sub{color:#3d2f60;font-size:10px;letter-spacing:4px;margin-bottom:28px}
-.steps{display:flex;align-items:center;justify-content:center;margin-bottom:28px;flex-wrap:wrap;gap:0}
+.sub{color:#3d2f60;font-size:10px;letter-spacing:4px;margin-bottom:26px}
+.steps{display:flex;align-items:center;justify-content:center;margin-bottom:22px;flex-wrap:wrap}
 .step{display:flex;flex-direction:column;align-items:center;gap:8px}
-.ln{width:24px;height:2px;background:#1e1535;margin-bottom:22px}
-.step.done+.ln{background:#7c3aed60}
-.sc{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:14px;font-weight:800;border:2px solid #1e1535;background:#100d1e;color:#2e2248}
-.step.done .sc{background:#2d1a60;border-color:#7c3aed;color:#c4b5fd;box-shadow:0 0 14px #7c3aed40}
-.step.active .sc{background:#3b1f70;border-color:#a855f7;color:#f3e8ff;box-shadow:0 0 20px #a855f760}
+.ln{width:22px;height:2px;background:#1e1535;margin-bottom:22px}
+.step.done+.ln{background:#7c3aed55}
+.sc{width:40px;height:40px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+    font-size:14px;font-weight:800;border:2px solid #1e1535;background:#100d1e;color:#2e2248}
+.step.done .sc{background:#2d1a60;border-color:#7c3aed;color:#c4b5fd;box-shadow:0 0 12px #7c3aed40}
+.step.active .sc{background:#3b1f70;border-color:#a855f7;color:#f3e8ff;box-shadow:0 0 18px #a855f760}
 .sl{font-size:9px;color:#2e2248;text-align:center;line-height:1.5}
 .sl span{color:#6d28d9;font-weight:bold}
 .step.done .sl,.step.active .sl{color:#8b7aaa}
 .step.done .sl span,.step.active .sl span{color:#a855f7}
-.msg{padding:16px 20px;border-radius:12px;font-size:13px;line-height:1.7;margin-bottom:24px;border:1px solid}
-.btn{display:block;background:linear-gradient(135deg,#5b21b6,#7c3aed);color:#f3e8ff;border:none;border-radius:12px;padding:14px 32px;font-size:11px;font-weight:800;letter-spacing:3px;cursor:pointer;text-decoration:none;transition:.2s;width:100%;box-shadow:0 4px 24px #7c3aed28;margin-top:8px}
+.msg{padding:16px 18px;border-radius:12px;font-size:13px;line-height:1.7;margin-bottom:22px;border:1px solid}
+.btn{display:block;background:linear-gradient(135deg,#5b21b6,#7c3aed);color:#f3e8ff;border:none;
+     border-radius:12px;padding:14px 28px;font-size:11px;font-weight:800;letter-spacing:3px;
+     cursor:pointer;text-decoration:none;transition:.18s;width:100%;margin-top:8px;
+     box-shadow:0 4px 20px #7c3aed25}
 .btn:hover:not(:disabled){background:linear-gradient(135deg,#6d28d9,#9333ea);transform:translateY(-1px)}
-.btn:disabled{opacity:0.5;cursor:not-allowed}
-.footer{margin-top:24px;font-size:10px;color:#1e1535;letter-spacing:2px}`;
+.btn:disabled{opacity:.45;cursor:not-allowed}
+.footer{margin-top:22px;font-size:10px;color:#1e1535;letter-spacing:2px}`;
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  AUTO CLEANUP
-// ═══════════════════════════════════════════════════════════════
-function runCleanup() {
+// ═══════════════════════════════════════════════════════════════════
+//  AUTO CLEANUP  (every hour)
+// ═══════════════════════════════════════════════════════════════════
+function cleanup() {
     const now = Date.now();
-    let kR=0, tR=0;
-    for (const [k, d] of keys.entries())
-        if (!d.blocked && d.expiresAt > 0 && now > d.expiresAt + 3600000) { keys.delete(k); kR++; }
-    for (const [t, tv] of verifyTokens.entries())
-        if (tv.used || now - tv.createdAt > CONFIG.VERIFY_TOKEN_TTL * 2) { verifyTokens.delete(t); tR++; }
-    for (const [uid, ts] of cooldowns.entries())
-        if (now - ts > CONFIG.GETKEY_COOLDOWN * 20) cooldowns.delete(uid);
-    for (const [uid, d] of approvalQueue.entries())
-        if (now - d.createdAt > CONFIG.APPROVAL_TTL) approvalQueue.delete(uid);
-    for (const [uid, p] of pendingUsers.entries())
-        if (now - p.createdAt > 3 * 3600000) pendingUsers.delete(uid);
-    for (const [ip, rec] of failLog.entries())
-        if (rec.blockedUntil && now > rec.blockedUntil + 3600000) failLog.delete(ip);
-    for (const [token, ch] of activeChallenges.entries()) {
-        const tv = verifyTokens.get(token);
-        if (!tv || tv.used || now - tv.createdAt > CONFIG.VERIFY_TOKEN_TTL * 2) activeChallenges.delete(token);
-    }
-    console.log(`[Void] 🧹 Cleanup done — keys-${kR} tokens-${tR}`);
+    let kR=0, tR=0, cR=0;
+
+    for (const [k, d] of keys)
+        if (!d.blocked && d.expiresAt > 0 && now > d.expiresAt + 3_600_000) { keys.delete(k); kR++; }
+
+    for (const [t, tv] of vtokens)
+        if (tv.used || now - tv.createdAt > CFG.TOKEN_TTL * 2) { vtokens.delete(t); tR++; }
+
+    for (const [t] of challenges)
+        if (!vtokens.has(t)) challenges.delete(t);
+
+    for (const [uid, ts] of cooldowns)
+        if (now - ts > CFG.COOLDOWN * 15) { cooldowns.delete(uid); cR++; }
+
+    for (const [uid, d] of approvals)
+        if (now - d.createdAt > CFG.APPROVAL_TTL) approvals.delete(uid);
+
+    for (const [uid, p] of pending)
+        if (now - p.createdAt > 3 * 3_600_000) pending.delete(uid);
+
+    for (const [ip, r] of failLog)
+        if (r.blockedUntil && now > r.blockedUntil + 3_600_000) failLog.delete(ip);
+
+    console.log(`[VOID] 🧹 Cleanup — keys:${kR} tokens:${tR} cooldowns:${cR}`);
 }
+setInterval(cleanup, CFG.CLEANUP_EVERY);
 
-setInterval(runCleanup, CONFIG.CLEANUP_INTERVAL);
-
-// ═══════════════════════════════════════════════════════════════
-//  KEEP-ALIVE
-// ═══════════════════════════════════════════════════════════════
+// ═══════════════════════════════════════════════════════════════════
+//  KEEP-ALIVE  (every 10 min — prevents Render free tier sleep)
+// ═══════════════════════════════════════════════════════════════════
 function keepAlive() {
-    const url = CONFIG.BASE_URL;
+    const url = CFG.BASE_URL;
     if (!url || url.includes("localhost")) return;
     setInterval(() => {
-        const lib = url.startsWith("https") ? https : http;
-        const req = lib.get(url, r => console.log(`[Void] 💓 ${r.statusCode}`));
-        req.on("error", e => console.warn("[Void] Keep-alive error:", e.message));
+        const mod = url.startsWith("https") ? https : http;
+        const req = mod.get(url, r => console.log(`[VOID] 💓 Keep-alive → ${r.statusCode}`));
+        req.on("error", e => console.warn("[VOID] Keep-alive err:", e.message));
         req.end();
-    }, CONFIG.KEEPALIVE_INTERVAL);
-    console.log("[Void] 💓 Keep-alive started");
+    }, CFG.KEEPALIVE_EVERY);
+    console.log("[VOID] 💓 Keep-alive started");
 }
 
-// ═══════════════════════════════════════════════════════════════
-//  START
-// ═══════════════════════════════════════════════════════════════
-app.listen(CONFIG.API_PORT, () => console.log(`[Void] ✓ API on port ${CONFIG.API_PORT}`));
+// ═══════════════════════════════════════════════════════════════════
+//  LAUNCH
+// ═══════════════════════════════════════════════════════════════════
+app.listen(CFG.PORT, () => console.log(`[VOID] ✓ API on port ${CFG.PORT}`));
+
 keepAlive();
 
-process.on("unhandledRejection", err => console.error("[Void] Unhandled:", err?.message || err));
-process.on("uncaughtException",  err => console.error("[Void] Uncaught:",  err?.message || err));
+process.on("unhandledRejection", e => console.error("[VOID] Unhandled rejection:", e?.message || e));
+process.on("uncaughtException",  e => console.error("[VOID] Uncaught exception:",  e?.message || e));
 
-client.login(CONFIG.TOKEN).catch(err => {
-    console.error("[Void] LOGIN FAILED:", err.message);
+client.login(CFG.TOKEN).catch(e => {
+    console.error("[VOID] LOGIN FAILED:", e.message);
     process.exit(1);
 });
