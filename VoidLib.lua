@@ -1,903 +1,1426 @@
 --[[
-╔══════════════════════════════════════════════════════════╗
-║            VoidKeyLib  —  Key System Library             ║
-║   ModuleScript  ·  ReplicatedStorage / require()        ║
-╠══════════════════════════════════════════════════════════╣
-║  QUICK START:                                            ║
-║                                                          ║
-║   local VoidKey = loadstring(game:HttpGet(              ║
-║       "https://raw.githubusercontent.com/.../VoidKeyLib.lua"
-║   ))()                                                   ║
-║                                                          ║
-║   VoidKey.new({                                          ║
-║       Title      = "MYSCRIPT",                           ║
-║       Subtitle   = "Authentication",                     ║
-║       Version    = "v1.0",                               ║
-║       Discord    = "discord.gg/yourserver",              ║
-║       ApiUrl     = "https://yourserver.com/validate",   ║
-║       ToggleKey  = Enum.KeyCode.RightAlt,                ║
-║       OnSuccess  = function() loadstring(...)() end,     ║
-║       OnFail     = function(key) print("Bad:", key) end, ║
-║   })                                                     ║
-║                                                          ║
-║  KEY VALIDATION:                                         ║
-║   GET  {ApiUrl}?key=VOID-XXXX-XXXX-XXXX                  ║
-║   Response JSON: { "valid": true/false }                 ║
-╚══════════════════════════════════════════════════════════╝
-]]
+╔═══════════════════════════════════════════════════════════════════════╗
+║        V O I D L I B  ✦  v10.0  C E L E S T I A L  E D I T I O N   ║
+╠═══════════════════════════════════════════════════════════════════════╣
+║                                                                      ║
+║  USAGE:                                                              ║
+║                                                                      ║
+║  local VoidLib = loadstring(game:HttpGet(                            ║
+║    "https://raw.githubusercontent.com/wafyjessr6362/" ..             ║
+║    "Void/refs/heads/main/VoidLib.lua", true                          ║
+║  ))()                                                                ║
+║                                                                      ║
+║  local window = VoidLib.new({                                        ║
+║    -- REQUIRED                                                       ║
+║    Title       = "MY SCRIPT",                                        ║
+║    ApiUrl      = "https://void-r3co.onrender.com/validate",          ║
+║                                                                      ║
+║    -- STEPS  (cosmetic — matches your bot config)                    ║
+║    Steps       = 1,          -- 1, 2, or 3                          ║
+║    ShowSteps   = true,                                               ║
+║                                                                      ║
+║    -- COLOUR CYCLING                                                 ║
+║    ColorChange = 3,          -- seconds between colour changes       ║
+║                              -- set 0 to lock on first colour        ║
+║    Colors = {                -- your colour cycle (any length)       ║
+║      Color3.fromRGB(109, 40, 217),                                   ║
+║      Color3.fromRGB(30,  120, 220),                                  ║
+║      Color3.fromRGB(200, 50,  130),                                  ║
+║      Color3.fromRGB(20,  190, 140),                                  ║
+║    },                                                                ║
+║                                                                      ║
+║    -- APPEARANCE                                                     ║
+║    Subtitle    = "Authentication",                                   ║
+║    Version     = "v1.0",                                             ║
+║    Discord     = "discord.gg/yourserver",  -- "" to hide            ║
+║    BlurBG      = true,                                               ║
+║    Stars       = true,       -- animated star particles              ║
+║    Particles   = true,       -- floating orb particles               ║
+║    GlowPulse   = true,       -- window glow heartbeat                ║
+║    TypewriterTitle = true,   -- title types itself on open           ║
+║                                                                      ║
+║    -- BEHAVIOUR                                                      ║
+║    ToggleKey   = Enum.KeyCode.RightAlt,                              ║
+║    RememberKey = true,                                               ║
+║    AutoClose   = true,                                               ║
+║                                                                      ║
+║    -- CALLBACKS                                                      ║
+║    OnSuccess   = function(data) end,  -- data = API response         ║
+║    OnFail      = function(key, reason) end,                          ║
+║    OnClose     = function() end,                                     ║
+║    OnOpen      = function() end,                                     ║
+║  })                                                                  ║
+║                                                                      ║
+║  -- Methods:                                                         ║
+║  window:Show()    window:Hide()    window:Destroy()                  ║
+║  window:SetTitle(str)   window:SetStatus(str, color)                 ║
+╚═══════════════════════════════════════════════════════════════════════╝
+--]]
 
-local VoidKeyLib = {}
-VoidKeyLib.__index = VoidKeyLib
+local VoidLib   = {}
+VoidLib.__index = VoidLib
 
--- ══════════════════════════════════════════════
+-- ════════════════════════════════════════════════════════════════════
 --  SERVICES
--- ══════════════════════════════════════════════
-local Players          = game:GetService("Players")
-local TweenService     = game:GetService("TweenService")
-local RunService       = game:GetService("RunService")
-local UserInputService = game:GetService("UserInputService")
-local HttpService      = game:GetService("HttpService")
+-- ════════════════════════════════════════════════════════════════════
+local Players    = game:GetService("Players")
+local TweenSvc   = game:GetService("TweenService")
+local UIS        = game:GetService("UserInputService")
+local RunSvc     = game:GetService("RunService")
+local HttpSvc    = game:GetService("HttpService")
+local Lighting   = game:GetService("Lighting")
+local LP         = Players.LocalPlayer
+local PGui       = LP:WaitForChild("PlayerGui")
 
--- ══════════════════════════════════════════════
---  PALETTE  (all dark)
--- ══════════════════════════════════════════════
-local C = {
-    BgDeep   = Color3.fromRGB(4,   3,   9),
-    BgPanel  = Color3.fromRGB(10,  8,  17),
-    Glass    = Color3.fromRGB(18,  14,  30),
-    GlassMid = Color3.fromRGB(26,  20,  42),
-    Stroke   = Color3.fromRGB(52,  40,  74),
-    StrokeLo = Color3.fromRGB(30,  22,  48),
-    Purple   = Color3.fromRGB(90,  50, 155),
-    PurpHi   = Color3.fromRGB(115, 68, 185),
-    Crimson  = Color3.fromRGB(115, 22,  45),
-    DimPurp  = Color3.fromRGB(55,  35,  90),
-    DimCrim  = Color3.fromRGB(70,  16,  30),
-    TextHi   = Color3.fromRGB(165, 150, 192),
-    TextMid  = Color3.fromRGB(105,  96, 130),
-    TextLo   = Color3.fromRGB(58,   52,  78),
-    OkDark   = Color3.fromRGB(36,  82,  55),
-    OkMid    = Color3.fromRGB(50, 105,  68),
-    ErrDark  = Color3.fromRGB(105, 25,  40),
-    ErrMid   = Color3.fromRGB(135, 35,  50),
-    Shine    = Color3.fromRGB(120, 105, 160),
+-- ════════════════════════════════════════════════════════════════════
+--  DEFAULT COLOUR PALETTE
+-- ════════════════════════════════════════════════════════════════════
+local DEFAULT_COLORS = {
+    Color3.fromRGB(109, 40,  217),   -- violet
+    Color3.fromRGB(30,  120, 220),   -- sapphire
+    Color3.fromRGB(200, 50,  130),   -- rose
+    Color3.fromRGB(20,  190, 140),   -- teal
+    Color3.fromRGB(230, 120,  20),   -- amber
+    Color3.fromRGB(80,  200, 240),   -- sky
 }
 
--- ══════════════════════════════════════════════
---  INTERNAL HELPERS
--- ══════════════════════════════════════════════
+-- ════════════════════════════════════════════════════════════════════
+--  DEFAULTS
+-- ════════════════════════════════════════════════════════════════════
+local DEFAULTS = {
+    Title            = "VOID",
+    Subtitle         = "Authentication",
+    Version          = "v1.0",
+    Discord          = "",
+    ApiUrl           = "https://void-r3co.onrender.com/validate",
+    Steps            = 1,
+    ShowSteps        = true,
+    ColorChange      = 3,
+    Colors           = DEFAULT_COLORS,
+    BlurBG           = true,
+    Stars            = true,
+    Particles        = true,
+    GlowPulse        = true,
+    TypewriterTitle  = true,
+    ToggleKey        = Enum.KeyCode.RightAlt,
+    RememberKey      = true,
+    AutoClose        = true,
+    OnSuccess        = function() end,
+    OnFail           = function() end,
+    OnClose          = function() end,
+    OnOpen           = function() end,
+}
+
+-- ════════════════════════════════════════════════════════════════════
+--  BASE PALETTE  (never changes)
+-- ════════════════════════════════════════════════════════════════════
+local COL = {
+    BG         = Color3.fromRGB(4,   3,   10),
+    BG2        = Color3.fromRGB(9,   7,   19),
+    BG3        = Color3.fromRGB(14,  11,  26),
+    BG4        = Color3.fromRGB(20,  16,  36),
+    BORDER     = Color3.fromRGB(38,  28,  62),
+    BORDER2    = Color3.fromRGB(58,  44,  94),
+    TEXT       = Color3.fromRGB(160, 148, 190),
+    TEXT_HI    = Color3.fromRGB(224, 215, 244),
+    TEXT_DIM   = Color3.fromRGB(52,  40,  80),
+    TEXT_FAINT = Color3.fromRGB(30,  22,  50),
+    GREEN      = Color3.fromRGB(52,  211, 111),
+    GREEN_DK   = Color3.fromRGB(16,  100,  46),
+    RED        = Color3.fromRGB(248,  72,  72),
+    RED_DK     = Color3.fromRGB(100,  18,  18),
+    YELLOW     = Color3.fromRGB(251, 191,  36),
+    WHITE      = Color3.fromRGB(240, 232, 255),
+    STAR       = Color3.fromRGB(200, 188, 230),
+}
+
+-- ════════════════════════════════════════════════════════════════════
+--  HELPERS
+-- ════════════════════════════════════════════════════════════════════
 local function tw(obj, props, t, style, dir)
-    local tween = TweenService:Create(obj,
-        TweenInfo.new(t or .3,
+    if not obj or not obj.Parent then return end
+    TweenSvc:Create(obj,
+        TweenInfo.new(t or 0.2,
             style or Enum.EasingStyle.Quart,
             dir   or Enum.EasingDirection.Out),
-        props)
+        props
+    ):Play()
+end
+
+local function twSync(obj, props, t, style, dir)
+    if not obj or not obj.Parent then return end
+    local tween = TweenSvc:Create(obj,
+        TweenInfo.new(t or 0.2,
+            style or Enum.EasingStyle.Quart,
+            dir   or Enum.EasingDirection.Out),
+        props
+    )
     tween:Play()
     return tween
 end
 
-local function corner(p, r)
-    local u = Instance.new("UICorner")
-    u.CornerRadius = UDim.new(0, r or 10)
-    u.Parent = p
-    return u
+local function make(cls, props, parent)
+    local o = Instance.new(cls)
+    for k, v in pairs(props or {}) do
+        if k ~= "Parent" then
+            pcall(function() o[k] = v end)
+        end
+    end
+    if parent then o.Parent = parent end
+    return o
 end
 
-local function mkstroke(p, col, thick, trans)
+local function corner(r, p)
+    local c = Instance.new("UICorner")
+    c.CornerRadius = UDim.new(0, r or 8)
+    c.Parent = p
+    return c
+end
+
+local function uiStroke(col, th, p, tr)
     local s = Instance.new("UIStroke")
-    s.Color           = col   or C.Stroke
-    s.Thickness       = thick or 1
-    s.Transparency    = trans or .3
-    s.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
-    s.Parent          = p
+    s.Color       = col or COL.BORDER
+    s.Thickness   = th  or 1
+    s.Transparency = tr or 0
+    s.Parent      = p
     return s
 end
 
-local function grad(p, rot, c0, c1)
+local function gradient(c0, c1, rot, parent)
     local g = Instance.new("UIGradient")
+    g.Color    = ColorSequence.new(c0, c1)
     g.Rotation = rot or 90
-    g.Color = ColorSequence.new({
-        ColorSequenceKeypoint.new(0, c0 or C.Glass),
-        ColorSequenceKeypoint.new(1, c1 or C.BgPanel),
-    })
-    g.Parent = p
+    g.Parent   = parent
     return g
 end
 
-local function shineLine(parent, trans)
-    local s = Instance.new("Frame")
-    s.Size               = UDim2.new(1, 0, 0, 1)
-    s.BackgroundColor3   = C.Shine
-    s.BackgroundTransparency = trans or .72
-    s.BorderSizePixel    = 0
-    s.ZIndex             = parent.ZIndex + 1
-    corner(s, 99)
-    grad(s, 0, C.Shine, C.Purple)
-    s.Parent = parent
-    return s
+local function darker(c, f)
+    f = f or 0.45
+    return Color3.new(math.clamp(c.R*f,0,1), math.clamp(c.G*f,0,1), math.clamp(c.B*f,0,1))
 end
 
-local function mkframe(parent, size, pos, bg, trans, zi)
-    local f = Instance.new("Frame")
-    f.Size                    = size
-    f.Position                = pos or UDim2.new(0,0,0,0)
-    f.BackgroundColor3        = bg   or C.Glass
-    f.BackgroundTransparency  = trans or 0
-    f.BorderSizePixel         = 0
-    f.ZIndex                  = zi   or 10
-    f.Parent                  = parent
-    return f
+local function lighter(c, f)
+    f = f or 1.35
+    return Color3.new(math.clamp(c.R*f,0,1), math.clamp(c.G*f,0,1), math.clamp(c.B*f,0,1))
 end
 
-local function mklbl(parent, text, size, font, color, xa, zi)
-    local l = Instance.new("TextLabel")
-    l.BackgroundTransparency = 1
-    l.Text           = text
-    l.TextSize       = size  or 12
-    l.Font           = font  or Enum.Font.Gotham
-    l.TextColor3     = color or C.TextMid
-    l.TextXAlignment = xa    or Enum.TextXAlignment.Left
-    l.ZIndex         = zi    or 12
-    l.Parent         = parent
-    return l
+local function lerp(a, b, t)
+    return a + (b - a) * t
 end
 
-local function mkbtn(parent, size, pos, bg, trans, text, tsize, tcolor, zi)
-    local b = Instance.new("TextButton")
-    b.Size                   = size
-    b.Position               = pos or UDim2.new(0,0,0,0)
-    b.BackgroundColor3       = bg    or C.DimPurp
-    b.BackgroundTransparency = trans or .3
-    b.BorderSizePixel        = 0
-    b.Text                   = text  or ""
-    b.TextSize               = tsize or 11
-    b.Font                   = Enum.Font.GothamBold
-    b.TextColor3             = tcolor or C.TextHi
-    b.AutoButtonColor        = false
-    b.ZIndex                 = zi    or 13
-    corner(b, 8)
-    b.Parent = parent
-    return b
+local function lerpColor(a, b, t)
+    return Color3.new(
+        lerp(a.R, b.R, t),
+        lerp(a.G, b.G, t),
+        lerp(a.B, b.B, t)
+    )
 end
 
--- ══════════════════════════════════════════════
---  HTTP KEY VALIDATION
---  Tries syn.request → http.request → fallback
--- ══════════════════════════════════════════════
-local function httpGet(url)
-    local body = nil
-    -- executor http (syn/krnl/fluxus etc.)
-    if syn and syn.request then
-        local ok, res = pcall(syn.request, {Url=url, Method="GET"})
-        if ok and res then body = res.Body end
-    elseif http and http.request then
-        local ok, res = pcall(http.request, {Url=url, Method="GET"})
-        if ok and res then body = res.Body end
-    elseif request then
-        local ok, res = pcall(request, {Url=url, Method="GET"})
-        if ok and res then body = res.Body end
+local function randomRange(a, b)
+    return a + math.random() * (b - a)
+end
+
+-- Key persistence
+local function saveKey(k)
+    pcall(function() if writefile then writefile("_void_key_cache.txt", k) end end)
+end
+
+local function loadSavedKey()
+    local ok, v = pcall(function()
+        return readfile and readfile("_void_key_cache.txt") or ""
+    end)
+    return (ok and type(v) == "string") and v or ""
+end
+
+-- ════════════════════════════════════════════════════════════════════
+--  HTTP VALIDATE
+-- ════════════════════════════════════════════════════════════════════
+local function validateKey(apiUrl, key)
+    if not key or key:match("^%s*$") then
+        return false, "Please enter your key", nil
     end
-    return body
-end
-
-local function validateKeyRemote(apiUrl, key)
-    if not apiUrl or apiUrl == "" then
-        -- no API configured — always fail (developer must configure)
-        return false, "No API URL configured"
-    end
-
-    local url  = apiUrl .. "?key=" .. key
-    local body = httpGet(url)
-
-    if not body then
-        return false, "Could not reach validation server"
-    end
-
-    local ok, data = pcall(HttpService.JSONDecode, HttpService, body)
+    local ok, res = pcall(function()
+        return HttpSvc:GetAsync(apiUrl .. "?key=" .. HttpSvc:UrlEncode(key), true)
+    end)
     if not ok then
-        return false, "Invalid server response"
+        return false, "Network error — check your connection", nil
     end
-
-    if data.valid == true then
-        return true, data.message or "Key accepted"
-    else
-        return false, data.message or "Invalid or expired key"
+    local ok2, parsed = pcall(function() return HttpSvc:JSONDecode(res) end)
+    if not ok2 then
+        return false, "Invalid server response", nil
     end
+    if parsed and parsed.valid then
+        return true, parsed.message or "Access granted", parsed
+    end
+    return false, (parsed and parsed.message) or "Invalid key", nil
 end
 
--- ══════════════════════════════════════════════
---  CONSTRUCTOR
--- ══════════════════════════════════════════════
-function VoidKeyLib.new(cfg)
-    local self  = setmetatable({}, VoidKeyLib)
-
-    -- Merge config with defaults
-    self.Title     = cfg.Title     or "VOID"
-    self.Subtitle  = cfg.Subtitle  or "Authentication"
-    self.Version   = cfg.Version   or "v1.0"
-    self.Discord   = cfg.Discord   or "discord.gg/void"
-    self.ApiUrl    = cfg.ApiUrl    or ""          -- Your key validation endpoint
-    self.ToggleKey = cfg.ToggleKey or Enum.KeyCode.RightAlt
-    self.OnSuccess = cfg.OnSuccess or function() end
-    self.OnFail    = cfg.OnFail    or function() end
-
-    -- Internal state
-    self._gui      = nil
-    self._guiOpen  = true
-    self._busy     = false
-    self._rebinding = false
-    self._unloaded = false
-    self._connections = {}
-
-    self:_build()
-    return self
+-- ════════════════════════════════════════════════════════════════════
+--  TYPEWRITER EFFECT
+-- ════════════════════════════════════════════════════════════════════
+local function typewriter(label, text, speed, callback)
+    label.Text = ""
+    local i = 0
+    local conn
+    conn = RunSvc.Heartbeat:Connect(function()
+        i = i + 1
+        if i % math.max(1, math.floor(60 / (speed or 12))) == 0 then
+            local len = math.min(#label.Text + 1, #text)
+            label.Text = text:sub(1, len)
+            if len >= #text then
+                conn:Disconnect()
+                if callback then callback() end
+            end
+        end
+    end)
+    return conn
 end
 
--- ══════════════════════════════════════════════
---  BUILD GUI
--- ══════════════════════════════════════════════
-function VoidKeyLib:_build()
-    local Player    = Players.LocalPlayer
-    local PlayerGui = Player:WaitForChild("PlayerGui")
+-- ════════════════════════════════════════════════════════════════════
+--  BUILD
+-- ════════════════════════════════════════════════════════════════════
+function VoidLib.new(config)
+    -- merge config
+    local cfg = {}
+    for k, v in pairs(DEFAULTS) do cfg[k] = v end
+    for k, v in pairs(config or {}) do cfg[k] = v end
 
-    -- destroy old
-    if PlayerGui:FindFirstChild("VoidKeyGui") then
-        PlayerGui.VoidKeyGui:Destroy()
+    cfg.Steps       = math.clamp(math.floor(cfg.Steps or 1), 1, 3)
+    cfg.ColorChange = type(cfg.ColorChange) == "number" and cfg.ColorChange or 3
+    if type(cfg.Colors) ~= "table" or #cfg.Colors == 0 then
+        cfg.Colors = DEFAULT_COLORS
     end
 
-    local GUI = Instance.new("ScreenGui")
-    GUI.Name           = "VoidKeyGui"
-    GUI.ResetOnSpawn   = false
-    GUI.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-    GUI.IgnoreGuiInset = true
-    GUI.Parent         = PlayerGui
-    self._gui          = GUI
+    -- kill old
+    local old = PGui:FindFirstChild("VoidLibUI_Celestial")
+    if old then old:Destroy() end
 
-    self:_buildLoadScreen(GUI, function()
-        self:_buildWindow(GUI)
-    end)
-end
+    -- ── Connections to clean up on destroy ─────────────────────
+    local connections = {}
+    local function conn(c) table.insert(connections, c) end
 
--- ══════════════════════════════════════════════
---  LOADING SCREEN
--- ══════════════════════════════════════════════
-function VoidKeyLib:_buildLoadScreen(GUI, onDone)
-    local LS = mkframe(GUI, UDim2.new(1,0,1,0), UDim2.new(0,0,0,0), C.BgDeep, 0, 100)
-    LS.Name = "LoadScreen"
+    -- ── ScreenGui ──────────────────────────────────────────────
+    local gui = make("ScreenGui", {
+        Name            = "VoidLibUI_Celestial",
+        ResetOnSpawn    = false,
+        ZIndexBehavior  = Enum.ZIndexBehavior.Sibling,
+        IgnoreGuiInset  = true,
+        DisplayOrder    = 999,
+    }, (gethui and gethui()) or PGui)
 
-    local vig = Instance.new("ImageLabel")
-    vig.Size = UDim2.new(1,0,1,0) ; vig.BackgroundTransparency = 1
-    vig.Image = "rbxassetid://6014261993"
-    vig.ImageColor3 = Color3.fromRGB(0,0,0) ; vig.ImageTransparency = .28
-    vig.ZIndex = 101 ; vig.Parent = LS
-
-    -- drifting orbs
-    for i = 1, 6 do
-        local orb = mkframe(LS,
-            UDim2.new(0,0,0,0),
-            UDim2.new(math.random()*0.7+0.15, 0, math.random()*0.5+0.1, 0),
-            C.Purple, .91, 101)
-        local s = math.random(55, 130)
-        orb.Size = UDim2.new(0,s,0,s)
-        corner(orb, 99)
-        local baseY = orb.Position.Y.Scale
-        local spd   = .22 + math.random()*.28
-        local off   = math.random() * math.pi * 2
-        local conn = RunService.Heartbeat:Connect(function()
-            if not orb or not orb.Parent then return end
-            orb.Position = UDim2.new(orb.Position.X.Scale, 0,
-                baseY + math.sin(tick()*spd+off)*.032, 0)
-        end)
-        table.insert(self._connections, conn)
+    -- ── Depth blur ──────────────────────────────────────────────
+    local blur
+    if cfg.BlurBG then
+        blur        = Instance.new("BlurEffect")
+        blur.Size   = 0
+        blur.Parent = Lighting
+        tw(blur, { Size = 20 }, 0.5, Enum.EasingStyle.Quint)
     end
 
-    -- logo group
-    local LG = mkframe(LS, UDim2.new(0,200,0,170),
-        UDim2.new(.5,0,.44,0), C.BgDeep, 1, 102)
-    LG.AnchorPoint = Vector2.new(.5,.5)
+    -- ════════════════════════════════════════════
+    --  FULL-SCREEN BACKDROP
+    -- ════════════════════════════════════════════
+    local backdrop = make("Frame", {
+        Size                  = UDim2.new(1, 0, 1, 0),
+        BackgroundColor3      = Color3.new(0, 0, 0),
+        BackgroundTransparency = 0.25,
+        BorderSizePixel       = 0,
+        ZIndex                = 1,
+    }, gui)
 
-    local Ring  = mkframe(LG, UDim2.new(0,90,0,90),  UDim2.new(.5,0,0,0),    C.Purple, .84, 102)
-    Ring.AnchorPoint = Vector2.new(.5,0)
-    corner(Ring,99) ; mkstroke(Ring, C.Purple, 1.5, .45)
+    -- ── Star field ─────────────────────────────────────────────
+    local starContainer
+    if cfg.Stars then
+        starContainer = make("Frame", {
+            Size                  = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel       = 0,
+            ZIndex                = 2,
+            ClipsDescendants      = false,
+        }, backdrop)
 
-    local Ring2 = mkframe(LG, UDim2.new(0,114,0,114), UDim2.new(.5,0,0,-12), C.Purple, .93, 101)
-    Ring2.AnchorPoint = Vector2.new(.5,0)
-    corner(Ring2,99) ; mkstroke(Ring2, C.DimPurp, 1, .55)
-
-    task.spawn(function()
-        while Ring and Ring.Parent do
-            tw(Ring,  {BackgroundTransparency=.70, Size=UDim2.new(0,96,0,96)},  1.5, Enum.EasingStyle.Sine)
-            tw(Ring2, {BackgroundTransparency=.88, Size=UDim2.new(0,120,0,120)},1.8, Enum.EasingStyle.Sine)
-            task.wait(1.8)
-            tw(Ring,  {BackgroundTransparency=.88, Size=UDim2.new(0,82,0,82)},  1.5, Enum.EasingStyle.Sine)
-            tw(Ring2, {BackgroundTransparency=.95, Size=UDim2.new(0,106,0,106)},1.8, Enum.EasingStyle.Sine)
-            task.wait(1.8)
+        local starCount = 80
+        local stars     = {}
+        for _ = 1, starCount do
+            local s = make("Frame", {
+                Size                  = UDim2.new(0, math.random(1,3), 0, math.random(1,3)),
+                Position              = UDim2.new(math.random(), 0, math.random(), 0),
+                BackgroundColor3      = COL.STAR,
+                BackgroundTransparency = randomRange(0.3, 0.85),
+                BorderSizePixel       = 0,
+                ZIndex                = 2,
+            }, starContainer)
+            corner(2, s)
+            table.insert(stars, { obj = s, speed = randomRange(0.00005, 0.0003), twinkleTimer = math.random() * 4 })
         end
-    end)
 
-    local LogoSym  = mklbl(LG, "◈", 48, Enum.Font.GothamBold, C.Purple, Enum.TextXAlignment.Center, 103)
-    LogoSym.Size = UDim2.new(0,90,0,90) ; LogoSym.Position = UDim2.new(.5,0,0,0)
-    LogoSym.AnchorPoint = Vector2.new(.5,0) ; LogoSym.BackgroundTransparency = 1
-
-    task.spawn(function()
-        while LogoSym and LogoSym.Parent do
-            tw(LogoSym, {TextColor3=C.PurpHi}, 1.6, Enum.EasingStyle.Sine)
-            task.wait(1.6)
-            tw(LogoSym, {TextColor3=C.Purple},  1.6, Enum.EasingStyle.Sine)
-            task.wait(1.6)
-        end
-    end)
-
-    local LoadTitle = mklbl(LG, self.Title, 32, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Center, 103)
-    LoadTitle.Size = UDim2.new(1,0,0,36) ; LoadTitle.Position = UDim2.new(0,0,0,98)
-    LoadTitle.BackgroundTransparency = 1
-
-    local LoadSub = mklbl(LG, "initializing...", 10, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Center, 103)
-    LoadSub.Size = UDim2.new(1,0,0,18) ; LoadSub.Position = UDim2.new(0,0,0,136)
-    LoadSub.BackgroundTransparency = 1
-
-    local BarTrack = mkframe(LS, UDim2.new(0,300,0,3), UDim2.new(.5,0,.64,0), C.GlassMid, .3, 102)
-    BarTrack.AnchorPoint = Vector2.new(.5,.5) ; corner(BarTrack, 99)
-
-    local BarFill = mkframe(BarTrack, UDim2.new(0,0,1,0), UDim2.new(0,0,0,0), C.Purple, 0, 103)
-    corner(BarFill, 99) ; grad(BarFill, 0, C.DimPurp, C.PurpHi)
-
-    local BarPct = mklbl(LS, "0%", 10, Enum.Font.GothamBold, C.TextLo, Enum.TextXAlignment.Right, 103)
-    BarPct.Size = UDim2.new(0,300,0,16) ; BarPct.Position = UDim2.new(.5,0,.64,8)
-    BarPct.AnchorPoint = Vector2.new(.5,0) ; BarPct.BackgroundTransparency = 1
-
-    local steps = {
-        {.18,"loading modules..."},
-        {.40,"verifying integrity..."},
-        {.60,"building interface..."},
-        {.82,"securing connection..."},
-        {1.00,"ready."},
-    }
-
-    task.spawn(function()
-        LogoSym.TextTransparency   = 1
-        LoadTitle.TextTransparency = 1
-        LoadSub.TextTransparency   = 1
-        BarTrack.BackgroundTransparency = 1
-
-        tw(LogoSym,   {TextTransparency=0}, .7, Enum.EasingStyle.Quart)
-        task.wait(.25)
-        tw(LoadTitle, {TextTransparency=0}, .6, Enum.EasingStyle.Quart)
-        task.wait(.18)
-        tw(LoadSub,   {TextTransparency=0}, .5, Enum.EasingStyle.Quart)
-        tw(BarTrack,  {BackgroundTransparency=.3}, .4)
-        task.wait(.25)
-
-        for _, step in ipairs(steps) do
-            LoadSub.Text = step[2]
-            tw(BarFill, {Size=UDim2.new(step[1],0,1,0)}, .42, Enum.EasingStyle.Quart)
-            BarPct.Text  = math.floor(step[1]*100).."%"
-            task.wait(.40)
-        end
-        task.wait(.3)
-
-        tw(LS,        {BackgroundTransparency=1}, .65, Enum.EasingStyle.Quart)
-        tw(LogoSym,   {TextTransparency=1}, .4)
-        tw(LoadTitle, {TextTransparency=1}, .4)
-        tw(LoadSub,   {TextTransparency=1}, .4)
-        tw(BarTrack,  {BackgroundTransparency=1}, .3)
-        task.wait(.7)
-        LS.Visible = false
-        if onDone then onDone() end
-    end)
-end
-
--- ══════════════════════════════════════════════
---  MAIN WINDOW  560 × 390  (wide/fat)
--- ══════════════════════════════════════════════
-function VoidKeyLib:_buildWindow(GUI)
-    local W, H = 560, 390
-
-    local Win = mkframe(GUI, UDim2.new(0,W,0,H), UDim2.new(.5,0,.5,0), C.BgPanel, .08, 10)
-    Win.Name = "Win" ; Win.AnchorPoint = Vector2.new(.5,.5)
-    Win.Visible = false
-    corner(Win, 16)
-    local WinStk = mkstroke(Win, C.Stroke, 1, .22)
-    grad(Win, 128, C.Glass, C.BgDeep)
-    shineLine(Win, .64)
-
-    task.spawn(function()
-        local h = .72
-        while Win and Win.Parent do
-            h = (h + .0025) % 1
-            WinStk.Color = Color3.fromHSV(h, .55, .6)
-            task.wait()
-        end
-    end)
-
-    -- ─── TITLE BAR ────────────────────────────
-    local TBar = mkframe(Win, UDim2.new(1,0,0,50), UDim2.new(0,0,0,0), C.GlassMid, .35, 11)
-    corner(TBar, 16) ; grad(TBar, 90, C.GlassMid, C.Glass) ; shineLine(TBar, .68)
-    local TBot = mkframe(TBar, UDim2.new(1,0,.5,0), UDim2.new(0,0,.5,0), C.GlassMid, .35, 11)
-    grad(TBot, 90, C.GlassMid, C.Glass)
-
-    local IcoWrap = mkframe(TBar, UDim2.new(0,32,0,32), UDim2.new(0,12,.5,0), C.Purple, .28, 12)
-    IcoWrap.AnchorPoint = Vector2.new(0,.5)
-    corner(IcoWrap, 9) ; mkstroke(IcoWrap, C.Purple, 1, .5) ; grad(IcoWrap, 135, C.DimPurp, C.PurpHi)
-    local IcoTxt = mklbl(IcoWrap, "◈", 17, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Center, 13)
-    IcoTxt.Size = UDim2.new(1,0,1,0) ; IcoTxt.BackgroundTransparency = 1
-
-    task.spawn(function()
-        while IcoWrap and IcoWrap.Parent do
-            tw(IcoWrap, {BackgroundTransparency=.10}, 1.4, Enum.EasingStyle.Sine)
-            task.wait(1.4)
-            tw(IcoWrap, {BackgroundTransparency=.36}, 1.4, Enum.EasingStyle.Sine)
-            task.wait(1.4)
-        end
-    end)
-
-    local TitleTxt = mklbl(TBar, self.Title, 17, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Left, 12)
-    TitleTxt.Size = UDim2.new(0,140,0,20) ; TitleTxt.Position = UDim2.new(0,52,0,6)
-    TitleTxt.BackgroundTransparency = 1
-
-    local SubTxt = mklbl(TBar, self.Subtitle, 9, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 12)
-    SubTxt.Size = UDim2.new(0,160,0,14) ; SubTxt.Position = UDim2.new(0,52,0,28)
-    SubTxt.BackgroundTransparency = 1
-
-    local VerBdg = mkframe(TBar, UDim2.new(0,42,0,17), UDim2.new(1,-54,.5,0), C.DimPurp, .28, 12)
-    VerBdg.AnchorPoint = Vector2.new(0,.5)
-    corner(VerBdg, 5) ; mkstroke(VerBdg, C.Purple, 1, .55)
-    local VerTxt = mklbl(VerBdg, self.Version, 9, Enum.Font.GothamBold, C.TextMid, Enum.TextXAlignment.Center, 13)
-    VerTxt.Size = UDim2.new(1,0,1,0)
-
-    -- ─── TABS ─────────────────────────────────
-    local TAB_Y      = 54
-    local TAB_H      = 30
-    local TAB_PAD    = 4
-    local TAB_W      = 116
-    local TAB_GAP    = 4
-    local TAB_X_KEY  = 12 + TAB_PAD
-    local TAB_X_SETT = 12 + TAB_PAD + TAB_W + TAB_GAP
-
-    local TabBar = mkframe(Win, UDim2.new(1,-24,0,TAB_H), UDim2.new(0,12,0,TAB_Y), C.Glass, .38, 11)
-    corner(TabBar, 9) ; mkstroke(TabBar, C.StrokeLo, 1, .58) ; grad(TabBar, 90, C.GlassMid, C.Glass)
-
-    local TL = Instance.new("UIListLayout")
-    TL.FillDirection     = Enum.FillDirection.Horizontal
-    TL.SortOrder         = Enum.SortOrder.LayoutOrder
-    TL.Padding           = UDim.new(0, TAB_GAP)
-    TL.VerticalAlignment = Enum.VerticalAlignment.Center
-    TL.Parent = TabBar
-    local TP = Instance.new("UIPadding")
-    TP.PaddingLeft  = UDim.new(0, TAB_PAD)
-    TP.PaddingRight = UDim.new(0, TAB_PAD)
-    TP.Parent = TabBar
-
-    -- Indicator on Win (NOT TabBar) so UIListLayout doesn't control it
-    local TabInd = mkframe(Win,
-        UDim2.new(0, TAB_W, 0, TAB_H-6),
-        UDim2.new(0, TAB_X_KEY, 0, TAB_Y+3),
-        C.DimPurp, .28, 12)
-    corner(TabInd, 7) ; mkstroke(TabInd, C.Purple, 1, .38)
-    grad(TabInd, 90, C.DimPurp, C.Glass) ; shineLine(TabInd, .72)
-
-    task.spawn(function()
-        while TabInd and TabInd.Parent do
-            tw(TabInd, {BackgroundTransparency=.18}, 1.2, Enum.EasingStyle.Sine)
-            task.wait(1.2)
-            tw(TabInd, {BackgroundTransparency=.36}, 1.2, Enum.EasingStyle.Sine)
-            task.wait(1.2)
-        end
-    end)
-
-    local function makeTabBtn(name, icon, order)
-        local b = Instance.new("TextButton")
-        b.Size             = UDim2.new(0, TAB_W, 0, TAB_H-6)
-        b.BackgroundTransparency = 1 ; b.BorderSizePixel = 0
-        b.Text             = icon.."  "..name
-        b.TextSize         = 10 ; b.Font = Enum.Font.GothamBold
-        b.TextColor3       = C.TextLo
-        b.AutoButtonColor  = false ; b.LayoutOrder = order
-        b.ZIndex = 14 ; corner(b, 7) ; b.Parent = TabBar
-        return b
-    end
-
-    local TabKey  = makeTabBtn("KEY",      "🔑", 1)
-    local TabSett = makeTabBtn("SETTINGS", "⚙",  2)
-
-    -- ─── PAGES ────────────────────────────────
-    local PY = TAB_Y + TAB_H + 8
-    local PH = H - PY - 12
-
-    local PageKey = mkframe(Win, UDim2.new(1,-24,0,PH), UDim2.new(0,12,0,PY), C.BgPanel, 1, 11)
-    local PageSet = mkframe(Win, UDim2.new(1,-24,0,PH), UDim2.new(0,12,0,PY), C.BgPanel, 1, 11)
-    PageSet.Visible = false
-
-    -- ═══════════════════════
-    --  PAGE: KEY
-    -- ═══════════════════════
-    local InfoCard = mkframe(PageKey, UDim2.new(1,0,0,78), UDim2.new(0,0,0,0), C.Glass, .4, 12)
-    corner(InfoCard, 12) ; mkstroke(InfoCard, C.Stroke, 1, .45)
-    grad(InfoCard, 120, C.GlassMid, C.BgPanel) ; shineLine(InfoCard, .72)
-
-    task.spawn(function()
-        local s = InfoCard:FindFirstChildWhichIsA("UIStroke")
-        while s and s.Parent do
-            tw(s, {Transparency=.28}, 2, Enum.EasingStyle.Sine)
-            task.wait(2)
-            tw(s, {Transparency=.55}, 2, Enum.EasingStyle.Sine)
-            task.wait(2)
-        end
-    end)
-
-    local InfoIco = mklbl(InfoCard, "🗝", 28, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Center, 13)
-    InfoIco.Size = UDim2.new(0,48,0,48) ; InfoIco.Position = UDim2.new(0,12,.5,0)
-    InfoIco.AnchorPoint = Vector2.new(0,.5) ; InfoIco.BackgroundTransparency = 1
-
-    task.spawn(function()
-        while InfoIco and InfoIco.Parent do
-            tw(InfoIco, {Position=UDim2.new(0,12,.5,-3)}, .9, Enum.EasingStyle.Sine)
-            task.wait(.9)
-            tw(InfoIco, {Position=UDim2.new(0,12,.5,3)},  .9, Enum.EasingStyle.Sine)
-            task.wait(.9)
-        end
-    end)
-
-    local InfoHead = mklbl(InfoCard, "Enter your license key", 13, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Left, 13)
-    InfoHead.Size = UDim2.new(1,-74,0,18) ; InfoHead.Position = UDim2.new(0,70,0,14) ; InfoHead.BackgroundTransparency = 1
-
-    local InfoBody = mklbl(InfoCard, "Get a key via ?getkey in "..self.Discord, 10, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 13)
-    InfoBody.Size = UDim2.new(1,-74,0,36) ; InfoBody.Position = UDim2.new(0,70,0,36)
-    InfoBody.BackgroundTransparency = 1 ; InfoBody.TextWrapped = true
-
-    local InpLbl = mklbl(PageKey, "LICENSE KEY", 9, Enum.Font.GothamBold, C.TextLo, Enum.TextXAlignment.Left, 12)
-    InpLbl.Size = UDim2.new(1,0,0,14) ; InpLbl.Position = UDim2.new(0,0,0,88) ; InpLbl.BackgroundTransparency = 1
-
-    local InputBox = mkframe(PageKey, UDim2.new(1,0,0,42), UDim2.new(0,0,0,104), C.BgDeep, .08, 12)
-    corner(InputBox, 10) ; local InpStk = mkstroke(InputBox, C.Stroke, 1.5, .32)
-    grad(InputBox, 90, C.BgPanel, C.BgDeep) ; shineLine(InputBox, .80)
-
-    local InpIco = mklbl(InputBox, "◈", 12, Enum.Font.GothamBold, C.TextLo, Enum.TextXAlignment.Center, 13)
-    InpIco.Size = UDim2.new(0,34,1,0) ; InpIco.BackgroundTransparency = 1
-
-    local KeyInput = Instance.new("TextBox")
-    KeyInput.Size = UDim2.new(1,-84,1,0) ; KeyInput.Position = UDim2.new(0,34,0,0)
-    KeyInput.BackgroundTransparency = 1 ; KeyInput.Text = ""
-    KeyInput.PlaceholderText = "VOID-XXXX-XXXX-XXXX"
-    KeyInput.TextColor3 = C.TextHi ; KeyInput.PlaceholderColor3 = C.TextLo
-    KeyInput.TextSize = 13 ; KeyInput.Font = Enum.Font.Code
-    KeyInput.ClearTextOnFocus = false ; KeyInput.ZIndex = 13 ; KeyInput.Parent = InputBox
-
-    local PasteBtn = mkbtn(InputBox, UDim2.new(0,44,0,26), UDim2.new(1,-48,.5,0),
-        C.GlassMid, .4, "PASTE", 9, C.TextMid, 13)
-    PasteBtn.AnchorPoint = Vector2.new(0,.5)
-    mkstroke(PasteBtn, C.Stroke, 1, .58)
-    PasteBtn.MouseEnter:Connect(function() tw(PasteBtn,{TextColor3=C.TextHi},.15) end)
-    PasteBtn.MouseLeave:Connect(function() tw(PasteBtn,{TextColor3=C.TextMid},.15) end)
-    PasteBtn.MouseButton1Click:Connect(function()
-        if getclipboard then
-            local ok, txt = pcall(getclipboard)
-            if ok and txt then KeyInput.Text = txt end
-        end
-    end)
-
-    local StatBar = mkframe(PageKey, UDim2.new(1,0,0,28), UDim2.new(0,0,0,154), C.Glass, .52, 12)
-    corner(StatBar, 8) ; mkstroke(StatBar, C.StrokeLo, 1, .62)
-
-    local StatDot = mkframe(StatBar, UDim2.new(0,6,0,6), UDim2.new(0,11,.5,0), C.TextLo, 0, 13)
-    StatDot.AnchorPoint = Vector2.new(0,.5) ; corner(StatDot, 99)
-
-    task.spawn(function()
-        while StatDot and StatDot.Parent do
-            tw(StatDot, {BackgroundTransparency=.35}, .8, Enum.EasingStyle.Sine)
-            task.wait(.8)
-            tw(StatDot, {BackgroundTransparency=0}, .8, Enum.EasingStyle.Sine)
-            task.wait(.8)
-        end
-    end)
-
-    local StatLbl = mklbl(StatBar, "Awaiting key input", 10, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 13)
-    StatLbl.Size = UDim2.new(1,-24,1,0) ; StatLbl.Position = UDim2.new(0,22,0,0) ; StatLbl.BackgroundTransparency = 1
-
-    -- Verify button
-    local VBtn = mkbtn(PageKey, UDim2.new(1,0,0,42), UDim2.new(0,0,0,190),
-        C.Purple, .14, "", 13, C.TextHi, 12)
-    local VStk = mkstroke(VBtn, C.Purple, 1.5, .48)
-    grad(VBtn, 135, C.DimPurp, C.PurpHi) ; shineLine(VBtn, .60)
-    local VGloss = mkframe(VBtn, UDim2.new(1,0,.46,0), UDim2.new(0,0,0,0), C.Shine, .88, 13)
-    corner(VGloss, 12)
-    local VTxt = mklbl(VBtn, "VERIFY KEY", 13, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Center, 14)
-    VTxt.Size = UDim2.new(1,0,1,0) ; VTxt.BackgroundTransparency = 1
-
-    task.spawn(function()
-        local h = .72
-        while VBtn and VBtn.Parent do
-            h = (h + .004) % 1
-            VStk.Color = Color3.fromHSV(h, .45, .7)
-            task.wait()
-        end
-    end)
-
-    VBtn.MouseEnter:Connect(function()
-        tw(VBtn, {BackgroundTransparency=.04},.16)
-        tw(VStk, {Transparency=.22},.16)
-        tw(VTxt, {TextSize=14},.16)
-    end)
-    VBtn.MouseLeave:Connect(function()
-        tw(VBtn, {BackgroundTransparency=.14},.16)
-        tw(VStk, {Transparency=.48},.16)
-        tw(VTxt, {TextSize=13},.16)
-    end)
-    VBtn.MouseButton1Down:Connect(function()
-        tw(VBtn, {Size=UDim2.new(.97,0,0,38), Position=UDim2.new(.015,0,0,192)}, .09)
-    end)
-    VBtn.MouseButton1Up:Connect(function()
-        tw(VBtn, {Size=UDim2.new(1,0,0,42), Position=UDim2.new(0,0,0,190)}, .14)
-    end)
-
-    local Div = mkframe(PageKey, UDim2.new(1,0,0,1), UDim2.new(0,0,0,242), C.Stroke, .5, 12)
-    corner(Div, 99) ; grad(Div, 0, C.Crimson, C.Purple)
-
-    local DRow = mkframe(PageKey, UDim2.new(1,0,0,34), UDim2.new(0,0,0,251),
-        Color3.fromRGB(52,57,120), .56, 12)
-    corner(DRow, 10) ; mkstroke(DRow, Color3.fromRGB(65,74,150), 1, .55) ; shineLine(DRow, .78)
-    local DIco = mklbl(DRow, "💬", 14, Enum.Font.GothamBold, C.TextHi, Enum.TextXAlignment.Center, 13)
-    DIco.Size = UDim2.new(0,34,1,0) ; DIco.BackgroundTransparency = 1
-    local DLbl = mklbl(DRow, "Type  ?getkey  in "..self.Discord, 10, Enum.Font.GothamBold, Color3.fromRGB(118,125,205), Enum.TextXAlignment.Left, 13)
-    DLbl.Size = UDim2.new(1,-38,1,0) ; DLbl.Position = UDim2.new(0,34,0,0) ; DLbl.BackgroundTransparency = 1
-
-    -- ═══════════════════════
-    --  PAGE: SETTINGS
-    -- ═══════════════════════
-    local function mkCard(parent, y, h)
-        local c = mkframe(parent, UDim2.new(1,0,0,h or 58), UDim2.new(0,0,0,y), C.Glass, .42, 12)
-        corner(c, 12) ; mkstroke(c, C.Stroke, 1, .5)
-        grad(c, 120, C.GlassMid, C.BgPanel) ; shineLine(c, .75)
-        return c
-    end
-
-    -- Keybind
-    local KbCard = mkCard(PageSet, 0, 62)
-    local KbH = mklbl(KbCard, "TOGGLE KEYBIND", 9, Enum.Font.GothamBold, C.TextLo, Enum.TextXAlignment.Left, 13)
-    KbH.Size = UDim2.new(.6,0,0,16) ; KbH.Position = UDim2.new(0,14,0,10) ; KbH.BackgroundTransparency = 1
-    local KbD = mklbl(KbCard, "Show / hide the window after unlock", 9, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 13)
-    KbD.Size = UDim2.new(.6,0,0,16) ; KbD.Position = UDim2.new(0,14,0,30) ; KbD.BackgroundTransparency = 1
-
-    local KbBtn = mkbtn(KbCard, UDim2.new(0,105,0,26), UDim2.new(1,-117,.5,0),
-        C.DimPurp, .28, self.ToggleKey.Name, 10, C.TextHi, 13)
-    KbBtn.AnchorPoint = Vector2.new(0,.5) ; mkstroke(KbBtn, C.Purple, 1, .42)
-    KbBtn.MouseEnter:Connect(function() tw(KbBtn,{BackgroundTransparency=.12},.15) end)
-    KbBtn.MouseLeave:Connect(function() tw(KbBtn,{BackgroundTransparency=.28},.15) end)
-
-    KbBtn.MouseButton1Click:Connect(function()
-        if self._rebinding then return end
-        self._rebinding = true
-        KbBtn.Text = "press key..."
-        tw(KbBtn, {BackgroundColor3=C.DimCrim}, .2)
-        local kc ; kc = UserInputService.InputBegan:Connect(function(inp, gpe)
-            if gpe then return end
-            if inp.UserInputType == Enum.UserInputType.Keyboard then
-                self.ToggleKey = inp.KeyCode
-                KbBtn.Text = inp.KeyCode.Name
-                tw(KbBtn, {BackgroundColor3=C.DimPurp}, .2)
-                self._rebinding = false ; kc:Disconnect()
+        -- Star twinkle + slow drift
+        local starConn = RunSvc.Heartbeat:Connect(function(dt)
+            for _, star in ipairs(stars) do
+                star.twinkleTimer = star.twinkleTimer + dt
+                local brightness  = 0.3 + 0.55 * math.abs(math.sin(star.twinkleTimer * 1.2))
+                star.obj.BackgroundTransparency = brightness
+                local curPos = star.obj.Position
+                local newY   = curPos.Y.Scale + star.speed * dt * 60
+                if newY > 1.02 then newY = -0.02 end
+                star.obj.Position = UDim2.new(curPos.X.Scale, 0, newY, 0)
             end
         end)
-    end)
-
-    -- Unload
-    local UlCard = mkCard(PageSet, 72, 56)
-    local UlH = mklbl(UlCard, "UNLOAD SCRIPT", 9, Enum.Font.GothamBold, C.TextLo, Enum.TextXAlignment.Left, 13)
-    UlH.Size = UDim2.new(.6,0,0,16) ; UlH.Position = UDim2.new(0,14,0,10) ; UlH.BackgroundTransparency = 1
-    local UlD = mklbl(UlCard, "Remove GUI and disconnect all events", 9, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 13)
-    UlD.Size = UDim2.new(.6,0,0,16) ; UlD.Position = UDim2.new(0,14,0,30) ; UlD.BackgroundTransparency = 1
-
-    local UlBtn = mkbtn(UlCard, UDim2.new(0,82,0,26), UDim2.new(1,-94,.5,0),
-        C.DimCrim, .24, "UNLOAD", 10, Color3.fromRGB(165,75,90), 13)
-    UlBtn.AnchorPoint = Vector2.new(0,.5) ; mkstroke(UlBtn, C.ErrDark, 1, .42)
-    UlBtn.MouseEnter:Connect(function() tw(UlBtn,{BackgroundColor3=C.ErrDark},.18) ; tw(UlBtn,{TextColor3=C.ErrMid},.18) end)
-    UlBtn.MouseLeave:Connect(function() tw(UlBtn,{BackgroundColor3=C.DimCrim},.18) ; tw(UlBtn,{TextColor3=Color3.fromRGB(165,75,90)},.18) end)
-    UlBtn.MouseButton1Click:Connect(function() self:Unload() end)
-
-    -- Info
-    local InfoSet = mkCard(PageSet, 138, 40)
-    local IS = mklbl(InfoSet, "◈  "..self.Title.."  ·  "..self.Version.."  ·  "..self.Discord, 10, Enum.Font.Gotham, C.TextLo, Enum.TextXAlignment.Left, 13)
-    IS.Size = UDim2.new(1,-24,1,0) ; IS.Position = UDim2.new(0,12,0,0) ; IS.BackgroundTransparency = 1
-
-    -- ─── TAB SWITCH ───────────────────────────
-    local activeKey = true
-    local function switchTab(toKey)
-        local tx = toKey and TAB_X_KEY or TAB_X_SETT
-        tw(TabInd, {Position=UDim2.new(0, tx, 0, TAB_Y+3)}, .22, Enum.EasingStyle.Quart)
-        TabKey.TextColor3  = toKey and C.TextHi or C.TextLo
-        TabSett.TextColor3 = toKey and C.TextLo or C.TextHi
-        if toKey and not activeKey then
-            PageSet.Visible = false ; PageKey.Visible = true
-        elseif not toKey and activeKey then
-            PageKey.Visible = false ; PageSet.Visible = true
-        end
-        activeKey = toKey
-    end
-    TabKey.MouseButton1Click:Connect(function()  switchTab(true)  end)
-    TabSett.MouseButton1Click:Connect(function() switchTab(false) end)
-    switchTab(true)
-
-    -- ─── INPUT FOCUS ──────────────────────────
-    KeyInput.Focused:Connect(function()
-        tw(InpStk, {Color=C.Purple, Transparency=.08}, .22)
-        tw(InputBox, {BackgroundTransparency=.03}, .22)
-        tw(InpIco, {TextColor3=C.Purple}, .22)
-    end)
-    KeyInput.FocusLost:Connect(function()
-        tw(InpStk, {Color=C.Stroke, Transparency=.32}, .22)
-        tw(InputBox, {BackgroundTransparency=.08}, .22)
-        tw(InpIco, {TextColor3=C.TextLo}, .22)
-    end)
-
-    -- ─── STATUS ───────────────────────────────
-    local function setStatus(text, dotCol, txtCol)
-        StatLbl.Text = text
-        tw(StatLbl, {TextColor3=txtCol  or C.TextMid}, .2)
-        tw(StatDot,  {BackgroundColor3=dotCol or C.TextLo}, .2)
+        conn(starConn)
     end
 
-    -- ─── FLASH + PARTICLES ────────────────────
-    local function flashWin(col)
-        local f = mkframe(Win, UDim2.new(1,0,1,0), UDim2.new(0,0,0,0), col, .76, 30)
-        corner(f, 16)
-        local ft = tw(f, {BackgroundTransparency=1}, .55)
-        ft.Completed:Connect(function() f:Destroy() end)
+    -- ════════════════════════════════════════════
+    --  COLOUR SYSTEM
+    -- ════════════════════════════════════════════
+    local colorIdx      = 1
+    local curAccent     = cfg.Colors[1]
+    local targetAccent  = cfg.Colors[1]
+    local lerpProgress  = 1.0    -- 0 = start lerp, 1 = done
+    local colorTimer    = 0
+
+    -- Registry: { obj, prop, fn(accent, dark, light) → value }
+    local accentReg = {}
+    local function reg(obj, prop, fn)
+        table.insert(accentReg, { obj = obj, prop = prop, fn = fn })
     end
 
-    local function burst(success)
-        local cols = success
-            and {C.Purple, C.DimPurp, C.Shine}
-            or  {C.ErrDark, C.Crimson, C.ErrMid}
-        for i = 1, 16 do
-            local p = mkframe(Win,
-                UDim2.new(0,math.random(4,10),0,math.random(4,10)),
-                UDim2.new(.5,0,.5,0), cols[math.random(1,#cols)], .08, 25)
-            p.AnchorPoint = Vector2.new(.5,.5) ; corner(p, 99)
-            local ang = (i/16)*math.pi*2
-            local d   = math.random(55,160)
-            local pt = tw(p, {
-                Position = UDim2.new(.5+math.cos(ang)*d/W, 0, .5+math.sin(ang)*d/H, 0),
-                BackgroundTransparency = 1,
-                Size = UDim2.new(0,2,0,2),
-            }, .55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
-            pt.Completed:Connect(function() p:Destroy() end)
-        end
-    end
-
-    local function shakeWin()
-        local orig = Win.Position
-        for i = 1, 8 do
-            task.wait(.036)
-            Win.Position = UDim2.new(orig.X.Scale,
-                orig.X.Offset + (i%2==0 and 8 or -8),
-                orig.Y.Scale, orig.Y.Offset)
-        end
-        Win.Position = orig
-    end
-
-    -- ─── VERIFY ───────────────────────────────
-    local spinF = {"⠋","⠙","⠹","⠸","⠼","⠴","⠦","⠧","⠇","⠏"}
-
-    local function doVerify()
-        if self._busy then return end
-        local key = KeyInput.Text:match("^%s*(.-)%s*$"):upper()
-        if key == "" then
-            setStatus("⚠  Enter a key first", C.ErrDark, C.TextMid)
-            task.spawn(shakeWin) ; return
-        end
-
-        self._busy = true
-        setStatus("Checking...", C.DimPurp, C.TextMid)
-        tw(VBtn, {BackgroundColor3=C.DimPurp}, .25)
-
-        local spinning = true
-        task.spawn(function()
-            local i = 1
-            while spinning do
-                VTxt.Text = spinF[i].."  VERIFYING"
-                i = i % #spinF + 1 ; task.wait(.07)
+    local function applyAccentInstant(c)
+        curAccent = c
+        local dark  = darker(c, 0.40)
+        local light = lighter(c, 1.30)
+        for _, r in ipairs(accentReg) do
+            if r.obj and r.obj.Parent then
+                pcall(function() r.obj[r.prop] = r.fn(c, dark, light) end)
             end
-        end)
+        end
+    end
 
-        -- Run HTTP validation off-thread
-        task.spawn(function()
-            local valid, msg = validateKeyRemote(self.ApiUrl, key)
-            spinning = false
-            self._busy = false
+    -- Smooth colour lerp every frame
+    local accentLerpConn
+    if cfg.ColorChange > 0 then
+        accentLerpConn = RunSvc.Heartbeat:Connect(function(dt)
+            colorTimer = colorTimer + dt
+            if colorTimer >= cfg.ColorChange then
+                colorTimer    = 0
+                colorIdx      = (colorIdx % #cfg.Colors) + 1
+                targetAccent  = cfg.Colors[colorIdx]
+                lerpProgress  = 0
+            end
 
-            if valid then
-                VTxt.Text = "✓  ACCESS GRANTED"
-                tw(VBtn, {BackgroundColor3=C.OkDark}, .3)
-                setStatus("✓  "..msg, C.OkDark, C.OkMid)
-                flashWin(C.OkDark) ; burst(true)
-
-                for _, d in pairs(VBtn:GetDescendants()) do
-                    if d:IsA("UIGradient") then d:Destroy() end
+            if lerpProgress < 1 then
+                lerpProgress = math.min(1, lerpProgress + dt * 1.8)
+                curAccent    = lerpColor(curAccent, targetAccent, lerpProgress)
+                local dark   = darker(curAccent,  0.40)
+                local light  = lighter(curAccent, 1.30)
+                for _, r in ipairs(accentReg) do
+                    if r.obj and r.obj.Parent then
+                        pcall(function() r.obj[r.prop] = r.fn(curAccent, dark, light) end)
+                    end
                 end
-                local gOk = Instance.new("UIGradient")
-                gOk.Rotation = 135
-                gOk.Color = ColorSequence.new(C.OkDark, C.OkMid)
-                gOk.Parent = VBtn
-
-                task.wait(1.1)
-                local ct = tw(Win, {
-                    Position = UDim2.new(.5,0,1.8,0),
-                    BackgroundTransparency = 1,
-                }, .55, Enum.EasingStyle.Back, Enum.EasingDirection.In)
-                ct.Completed:Connect(function()
-                    GUI:Destroy()
-                    self.OnSuccess()
-                end)
-            else
-                VTxt.Text = "VERIFY KEY"
-                tw(VBtn, {BackgroundColor3=C.Purple}, .3)
-                setStatus("✗  "..msg, C.ErrDark, C.ErrMid)
-                flashWin(C.ErrDark) ; burst(false) ; task.spawn(shakeWin)
-                self.OnFail(key)
             end
         end)
+        conn(accentLerpConn)
     end
 
-    VBtn.MouseButton1Click:Connect(doVerify)
-    KeyInput.FocusLost:Connect(function(enter) if enter then doVerify() end end)
+    -- ════════════════════════════════════════════
+    --  FLOATING ORB PARTICLES
+    -- ════════════════════════════════════════════
+    local particleConn
+    if cfg.Particles then
+        local orbContainer = make("Frame", {
+            Size                  = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            BorderSizePixel       = 0,
+            ZIndex                = 3,
+            ClipsDescendants      = true,
+        }, backdrop)
 
-    -- ─── TOGGLE KEYBIND ───────────────────────
-    local kbConn = UserInputService.InputBegan:Connect(function(inp, gpe)
-        if gpe then return end
-        if inp.KeyCode == self.ToggleKey and GUI:FindFirstChild("LoadScreen") and not GUI.LoadScreen.Visible then
-            self._guiOpen = not self._guiOpen
-            if self._guiOpen then
-                Win.Visible = true
-                Win.BackgroundTransparency = 1
-                Win.Size = UDim2.new(0,W,0,H-30)
-                tw(Win, {BackgroundTransparency=.08, Size=UDim2.new(0,W,0,H)}, .38, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-            else
-                local ht = tw(Win, {BackgroundTransparency=1, Size=UDim2.new(0,W,0,20)}, .28, Enum.EasingStyle.Quart)
-                ht.Completed:Connect(function()
-                    if not self._guiOpen then Win.Visible = false ; Win.Size = UDim2.new(0,W,0,H) end
-                end)
+        local orbCount = 14
+        local orbs     = {}
+        for i = 1, orbCount do
+            local sz  = math.random(4, 14)
+            local orb = make("Frame", {
+                Size                  = UDim2.new(0, sz, 0, sz),
+                Position              = UDim2.new(math.random(), 0, 1.05, 0),
+                BackgroundColor3      = curAccent,
+                BackgroundTransparency = randomRange(0.55, 0.80),
+                BorderSizePixel       = 0,
+                ZIndex                = 3,
+            }, orbContainer)
+            corner(sz, orb)
+            table.insert(orbs, {
+                obj        = orb,
+                x          = math.random(),
+                y          = 1.0 + math.random() * 0.3,
+                speedY     = randomRange(0.00015, 0.00040),
+                drift      = randomRange(-0.00008, 0.00008),
+                wobble     = math.random() * math.pi * 2,
+                wobbleSpd  = randomRange(0.6, 1.4),
+            })
+        end
+
+        particleConn = RunSvc.Heartbeat:Connect(function(dt)
+            for _, p in ipairs(orbs) do
+                p.y        = p.y - p.speedY * dt * 60
+                p.wobble   = p.wobble + p.wobbleSpd * dt
+                p.x        = p.x + p.drift * dt * 60 + math.sin(p.wobble) * 0.0002
+                p.obj.BackgroundColor3 = curAccent
+
+                if p.y < -0.06 then
+                    p.y  = 1.06
+                    p.x  = math.random()
+                end
+                p.obj.Position = UDim2.new(math.clamp(p.x, 0, 1), 0, p.y, 0)
+            end
+        end)
+        conn(particleConn)
+    end
+
+    -- ════════════════════════════════════════════
+    --  MAIN WINDOW
+    -- ════════════════════════════════════════════
+    local discordExtra = cfg.Discord ~= "" and 48 or 0
+    local stepsExtra   = (cfg.Steps > 1 and cfg.ShowSteps) and 64 or 0
+    local WIN_W        = 380
+    local WIN_H        = 444 + stepsExtra + discordExtra
+
+    local win = make("Frame", {
+        Name                  = "CelestialWindow",
+        Size                  = UDim2.new(0, WIN_W, 0, WIN_H),
+        Position              = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2),
+        BackgroundColor3      = COL.BG,
+        BorderSizePixel       = 0,
+        ZIndex                = 5,
+    }, gui)
+    corner(20, win)
+
+    -- Window border (accent-tracked)
+    local winStroke = uiStroke(COL.BORDER2, 1.4, win)
+    reg(winStroke, "Color", function(c) return darker(c, 0.75) end)
+
+    -- Inner subtle gradient
+    local winGrad = Instance.new("UIGradient")
+    winGrad.Color    = ColorSequence.new({
+        ColorSequenceKeypoint.new(0,   Color3.fromRGB(14, 10, 26)),
+        ColorSequenceKeypoint.new(0.5, Color3.fromRGB(8,  6,  18)),
+        ColorSequenceKeypoint.new(1,   Color3.fromRGB(4,  3,  10)),
+    })
+    winGrad.Rotation = 135
+    winGrad.Parent   = win
+
+    -- Glow shadow frame (behind window)
+    local glow = make("Frame", {
+        Size                  = UDim2.new(1, 40, 1, 40),
+        Position              = UDim2.new(0, -20, 0, -20),
+        BackgroundColor3      = curAccent,
+        BackgroundTransparency = 0.88,
+        BorderSizePixel       = 0,
+        ZIndex                = 4,
+    }, gui)
+    corner(30, glow)
+    glow.Position = UDim2.new(
+        win.Position.X.Scale, win.Position.X.Offset - 20,
+        win.Position.Y.Scale, win.Position.Y.Offset - 20
+    )
+    reg(glow, "BackgroundColor3", function(c) return c end)
+
+    -- Glow pulse
+    if cfg.GlowPulse then
+        local glowPulseConn = RunSvc.Heartbeat:Connect((function()
+            local t = 0
+            return function(dt)
+                t = t + dt
+                local alpha = 0.86 + 0.07 * math.sin(t * 1.6)
+                if glow and glow.Parent then
+                    glow.BackgroundTransparency = alpha
+                end
+            end
+        end)())
+        conn(glowPulseConn)
+    end
+
+    -- Entrance animation
+    win.BackgroundTransparency = 1
+    win.Size     = UDim2.new(0, WIN_W * 0.88, 0, WIN_H * 0.88)
+    win.Position = UDim2.new(0.5, -(WIN_W*0.88)/2, 0.5, -(WIN_H*0.88)/2 + 24)
+    tw(win, {
+        BackgroundTransparency = 0,
+        Size     = UDim2.new(0, WIN_W, 0, WIN_H),
+        Position = UDim2.new(0.5, -WIN_W/2, 0.5, -WIN_H/2),
+    }, 0.45, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
+
+    -- ── Celestial top banner ────────────────────────────────────
+    local BANNER_H = 108
+    local banner   = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, BANNER_H),
+        BackgroundColor3 = COL.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 6,
+    }, win)
+    corner(20, banner)
+    -- flatten bottom
+    make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 20),
+        Position         = UDim2.new(0, 0, 1, -20),
+        BackgroundColor3 = COL.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 6,
+    }, banner)
+
+    -- Banner nebula background
+    local nebula1 = make("Frame", {
+        Size                   = UDim2.new(0, 180, 0, 180),
+        Position               = UDim2.new(0, -40, 0, -60),
+        BackgroundColor3       = curAccent,
+        BackgroundTransparency = 0.82,
+        BorderSizePixel        = 0,
+        ZIndex                 = 6,
+    }, banner)
+    corner(90, nebula1)
+    reg(nebula1, "BackgroundColor3", function(c) return c end)
+
+    local nebula2 = make("Frame", {
+        Size                   = UDim2.new(0, 140, 0, 140),
+        Position               = UDim2.new(1, -100, 0, -50),
+        BackgroundColor3       = curAccent,
+        BackgroundTransparency = 0.86,
+        BorderSizePixel        = 0,
+        ZIndex                 = 6,
+    }, banner)
+    corner(70, nebula2)
+    reg(nebula2, "BackgroundColor3", function(c) return darker(c, 0.7) end)
+
+    -- Nebula animation
+    local nebulaConn = RunSvc.Heartbeat:Connect((function()
+        local t = 0
+        return function(dt)
+            t = t + dt * 0.4
+            if nebula1 and nebula1.Parent then
+                local s  = 180 + 18 * math.sin(t)
+                nebula1.Size = UDim2.new(0, s, 0, s)
+                nebula1.BackgroundTransparency = 0.80 + 0.06 * math.cos(t * 1.3)
+            end
+            if nebula2 and nebula2.Parent then
+                local s  = 140 + 12 * math.cos(t * 0.9)
+                nebula2.Size = UDim2.new(0, s, 0, s)
+                nebula2.BackgroundTransparency = 0.83 + 0.06 * math.sin(t * 1.1)
             end
         end
-    end)
-    table.insert(self._connections, kbConn)
+    end)())
+    conn(nebulaConn)
 
-    -- ─── OPEN ANIMATION ───────────────────────
-    Win.Visible = true
-    Win.BackgroundTransparency = 1
-    Win.Size = UDim2.new(0,W,0,H-50)
-    Win.Position = UDim2.new(.5,0,.42,0)
-    tw(Win, {
-        Position = UDim2.new(.5,0,.5,0),
-        BackgroundTransparency = .08,
-        Size = UDim2.new(0,W,0,H),
-    }, .55, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
-end
+    -- Top accent stripe (3px)
+    local topStripe = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 3),
+        BackgroundColor3 = curAccent,
+        BorderSizePixel  = 0,
+        ZIndex           = 8,
+    }, win)
+    corner(3, topStripe)
+    local topStripeGrad = gradient(curAccent, darker(curAccent, 0.3), 0, topStripe)
+    reg(topStripe, "BackgroundColor3", function(c) return c end)
 
--- ══════════════════════════════════════════════
---  PUBLIC: Unload
--- ══════════════════════════════════════════════
-function VoidKeyLib:Unload()
-    if self._unloaded then return end
-    self._unloaded = true
-    for _, c in ipairs(self._connections) do
-        if typeof(c) == "RBXScriptConnection" then c:Disconnect() end
+    -- Stripe shimmer
+    local shimmerConn = RunSvc.Heartbeat:Connect((function()
+        local t = 0
+        return function(dt)
+            t = t + dt * 0.8
+            if topStripeGrad and topStripeGrad.Parent then
+                local c2 = darker(curAccent, 0.2 + 0.15 * math.sin(t))
+                topStripeGrad.Color = ColorSequence.new(curAccent, c2)
+                topStripe.BackgroundColor3 = curAccent
+            end
+        end
+    end)())
+    conn(shimmerConn)
+
+    -- ── Central icon ────────────────────────────────────────────
+    local iconOuter = make("Frame", {
+        Size             = UDim2.new(0, 52, 0, 52),
+        Position         = UDim2.new(0.5, -26, 0, 10),
+        BackgroundColor3 = darker(curAccent, 0.30),
+        BorderSizePixel  = 0,
+        ZIndex           = 8,
+    }, banner)
+    corner(14, iconOuter)
+    local iconOuterStroke = uiStroke(curAccent, 1.8, iconOuter)
+    reg(iconOuter,       "BackgroundColor3", function(_,dark)  return dark         end)
+    reg(iconOuterStroke, "Color",            function(c)       return c            end)
+
+    -- Inner icon ring
+    local iconInner = make("Frame", {
+        Size             = UDim2.new(0, 38, 0, 38),
+        Position         = UDim2.new(0.5, -19, 0.5, -19),
+        BackgroundColor3 = darker(curAccent, 0.18),
+        BorderSizePixel  = 0,
+        ZIndex           = 9,
+    }, iconOuter)
+    corner(10, iconInner)
+    local iconInnerStroke = uiStroke(lighter(curAccent, 1.1), 1, iconInner, 0.3)
+    reg(iconInner,       "BackgroundColor3", function(c)       return darker(c, 0.18) end)
+    reg(iconInnerStroke, "Color",            function(c)       return lighter(c, 1.1) end)
+
+    local iconLabel = make("TextLabel", {
+        Size                  = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text                  = "✦",
+        TextColor3            = lighter(curAccent, 1.4),
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 22,
+        ZIndex                = 10,
+    }, iconInner)
+    reg(iconLabel, "TextColor3", function(c) return lighter(c, 1.4) end)
+
+    -- Icon pulse + rotation simulation (scale)
+    local iconPulseConn = RunSvc.Heartbeat:Connect((function()
+        local t = 0
+        return function(dt)
+            t = t + dt
+            if not iconOuter or not iconOuter.Parent then return end
+            local s = 52 + 3 * math.sin(t * 1.8)
+            iconOuter.Size = UDim2.new(0, s, 0, s)
+            iconOuter.Position = UDim2.new(0.5, -s/2, 0, 10)
+            iconOuterStroke.Transparency = 0.1 + 0.2 * math.cos(t * 2.2)
+        end
+    end)())
+    conn(iconPulseConn)
+
+    -- ── Title ───────────────────────────────────────────────────
+    local titleLbl = make("TextLabel", {
+        Size                  = UDim2.new(1, -20, 0, 24),
+        Position              = UDim2.new(0, 10, 0, 66),
+        BackgroundTransparency = 1,
+        Text                  = "",
+        TextColor3            = COL.TEXT_HI,
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 18,
+        ZIndex                = 8,
+    }, banner)
+
+    -- Subtitle
+    local subLbl = make("TextLabel", {
+        Size                  = UDim2.new(1, -20, 0, 12),
+        Position              = UDim2.new(0, 10, 0, 90),
+        BackgroundTransparency = 1,
+        Text                  = "",
+        TextColor3            = COL.TEXT_DIM,
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 8,
+        ZIndex                = 8,
+    }, banner)
+
+    -- Version badge
+    local verFrame = make("Frame", {
+        Size             = UDim2.new(0, 40, 0, 18),
+        Position         = UDim2.new(1, -48, 0, 10),
+        BackgroundColor3 = darker(curAccent, 0.30),
+        BorderSizePixel  = 0,
+        ZIndex           = 9,
+    }, banner)
+    corner(6, verFrame)
+    uiStroke(curAccent, 1, verFrame, 0.3)
+    reg(verFrame, "BackgroundColor3", function(_,dark) return dark end)
+
+    local verLbl = make("TextLabel", {
+        Size                  = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text                  = cfg.Version,
+        TextColor3            = lighter(curAccent, 1.3),
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 8,
+        ZIndex                = 10,
+    }, verFrame)
+    reg(verLbl, "TextColor3", function(c) return lighter(c, 1.3) end)
+
+    -- ── Scrollable content ──────────────────────────────────────
+    local scrollFrame = make("ScrollingFrame", {
+        Size                  = UDim2.new(1, -28, 1, -BANNER_H - 36),
+        Position              = UDim2.new(0, 14, 0, BANNER_H + 8),
+        BackgroundTransparency = 1,
+        BorderSizePixel       = 0,
+        ScrollBarThickness    = 2,
+        ScrollBarImageColor3  = COL.BORDER2,
+        CanvasSize            = UDim2.new(0, 0, 0, 0),
+        AutomaticCanvasSize   = Enum.AutomaticSize.Y,
+        ZIndex                = 6,
+    }, win)
+
+    local listLayout = make("UIListLayout", {
+        SortOrder = Enum.SortOrder.LayoutOrder,
+        Padding   = UDim.new(0, 8),
+    }, scrollFrame)
+
+    local order = 0
+    local function addItem(f)
+        order = order + 1
+        f.LayoutOrder = order
+        f.Parent = scrollFrame
     end
-    if self._gui then
-        local Win = self._gui:FindFirstChild("Win")
-        if Win then
-            local t = tw(Win, {BackgroundTransparency=1, Size=UDim2.new(0,560,0,20)}, .3, Enum.EasingStyle.Quart)
-            t.Completed:Connect(function() self._gui:Destroy() end)
-        else
-            self._gui:Destroy()
+
+    -- ════════════════════════════════════════════
+    --  STEPS INDICATOR
+    -- ════════════════════════════════════════════
+    if cfg.Steps > 1 and cfg.ShowSteps then
+        local sf = make("Frame", {
+            Size             = UDim2.new(1, 0, 0, 56),
+            BackgroundColor3 = COL.BG3,
+            BorderSizePixel  = 0,
+            ZIndex           = 7,
+        })
+        corner(12, sf)
+        uiStroke(COL.BORDER, 1, sf)
+
+        local stepW = 1 / cfg.Steps
+        for i = 1, cfg.Steps do
+            if i > 1 then
+                -- connector
+                local ln = make("Frame", {
+                    Size             = UDim2.new(stepW * 0.34, 0, 0, 2),
+                    Position         = UDim2.new((i-1)*stepW - stepW*0.17, 0, 0.5, -1),
+                    BackgroundColor3 = COL.BORDER,
+                    BorderSizePixel  = 0,
+                    ZIndex           = 7,
+                }, sf)
+                if i == 2 then reg(ln, "BackgroundColor3", function(c) return darker(c, 0.65) end) end
+            end
+
+            local isFirst = i == 1
+            local dotFrame = make("Frame", {
+                Size             = UDim2.new(0, 32, 0, 32),
+                Position         = UDim2.new((i-0.5)*stepW, -16, 0.5, -16),
+                BackgroundColor3 = isFirst and curAccent or COL.BG4,
+                BorderSizePixel  = 0,
+                ZIndex           = 8,
+            }, sf)
+            corner(16, dotFrame)
+            local dotStroke = uiStroke(isFirst and curAccent or COL.BORDER, 1.5, dotFrame, isFirst and 0.2 or 0)
+            if isFirst then
+                reg(dotFrame,  "BackgroundColor3", function(c) return c end)
+                reg(dotStroke, "Color",            function(c) return c end)
+            end
+
+            make("TextLabel", {
+                Size                  = UDim2.new(1, 0, 1, 0),
+                BackgroundTransparency = 1,
+                Text                  = tostring(i),
+                TextColor3            = isFirst and COL.WHITE or COL.TEXT_DIM,
+                Font                  = Enum.Font.GothamBold,
+                TextSize              = 13,
+                ZIndex                = 9,
+            }, dotFrame)
+
+            local stepLabel = make("TextLabel", {
+                Size                  = UDim2.new(0, 44, 0, 10),
+                Position              = UDim2.new(0.5, -22, 1, 5),
+                BackgroundTransparency = 1,
+                Text                  = "Step " .. i,
+                TextColor3            = isFirst and lighter(curAccent, 1.2) or COL.TEXT_FAINT,
+                Font                  = Enum.Font.GothamBold,
+                TextSize              = 7,
+                ZIndex                = 8,
+            }, sf)
+            if isFirst then reg(stepLabel, "TextColor3", function(c) return lighter(c, 1.2) end) end
+        end
+        addItem(sf)
+    end
+
+    -- ════════════════════════════════════════════
+    --  KEY INPUT PANEL
+    -- ════════════════════════════════════════════
+    local inputPanel = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 72),
+        BackgroundColor3 = COL.BG2,
+        BorderSizePixel  = 0,
+        ZIndex           = 7,
+    })
+    corner(14, inputPanel)
+    local inputPanelStroke = uiStroke(COL.BORDER, 1.2, inputPanel)
+
+    -- KEY label
+    local keyFieldLabel = make("TextLabel", {
+        Size                  = UDim2.new(1, -16, 0, 13),
+        Position              = UDim2.new(0, 12, 0, 9),
+        BackgroundTransparency = 1,
+        Text                  = "LICENSE KEY",
+        TextColor3            = COL.TEXT_DIM,
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 8,
+        TextXAlignment        = Enum.TextXAlignment.Left,
+        ZIndex                = 8,
+    }, inputPanel)
+
+    -- Input box
+    local keyBox = make("TextBox", {
+        Size                  = UDim2.new(1, -40, 0, 28),
+        Position              = UDim2.new(0, 12, 0, 34),
+        BackgroundTransparency = 1,
+        PlaceholderText       = "VOID-XXXX-XXXX-XXXX-XXXX",
+        PlaceholderColor3     = COL.TEXT_FAINT,
+        Text                  = "",
+        TextColor3            = COL.TEXT_HI,
+        Font                  = Enum.Font.Code,
+        TextSize              = 12,
+        TextXAlignment        = Enum.TextXAlignment.Left,
+        ClearTextOnFocus      = false,
+        ZIndex                = 8,
+    }, inputPanel)
+
+    -- Clear button
+    local clearBtn = make("TextButton", {
+        Size                  = UDim2.new(0, 22, 0, 22),
+        Position              = UDim2.new(1, -30, 0.5, -11),
+        BackgroundColor3      = COL.BG4,
+        BorderSizePixel       = 0,
+        Text                  = "✕",
+        TextColor3            = COL.TEXT_DIM,
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 9,
+        ZIndex                = 9,
+    }, inputPanel)
+    corner(6, clearBtn)
+    clearBtn.MouseButton1Click:Connect(function()
+        keyBox.Text = ""
+        keyBox:CaptureFocus()
+    end)
+    clearBtn.MouseEnter:Connect(function() tw(clearBtn, {TextColor3 = COL.RED}, 0.12) end)
+    clearBtn.MouseLeave:Connect(function() tw(clearBtn, {TextColor3 = COL.TEXT_DIM}, 0.12) end)
+
+    -- Focus effects
+    conn(keyBox.Focused:Connect(function()
+        tw(inputPanelStroke, {Color = curAccent, Thickness = 1.6}, 0.15)
+        tw(inputPanel, {BackgroundColor3 = COL.BG3}, 0.15)
+    end))
+    conn(keyBox.FocusLost:Connect(function()
+        tw(inputPanelStroke, {Color = COL.BORDER, Thickness = 1.2}, 0.15)
+        tw(inputPanel, {BackgroundColor3 = COL.BG2}, 0.15)
+    end))
+
+    if cfg.RememberKey then
+        local saved = loadSavedKey()
+        if saved ~= "" then keyBox.Text = saved end
+    end
+    addItem(inputPanel)
+
+    -- ════════════════════════════════════════════
+    --  STATUS BAR
+    -- ════════════════════════════════════════════
+    local statusPanel = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 40),
+        BackgroundColor3 = COL.BG3,
+        BorderSizePixel  = 0,
+        ZIndex           = 7,
+    })
+    corner(12, statusPanel)
+    uiStroke(COL.BORDER, 1, statusPanel)
+
+    -- Animated status indicator dot
+    local sDot = make("Frame", {
+        Size             = UDim2.new(0, 8, 0, 8),
+        Position         = UDim2.new(0, 12, 0.5, -4),
+        BackgroundColor3 = COL.TEXT_FAINT,
+        BorderSizePixel  = 0,
+        ZIndex           = 8,
+    }, statusPanel)
+    corner(4, sDot)
+
+    local sDotRing = make("Frame", {
+        Size             = UDim2.new(0, 16, 0, 16),
+        Position         = UDim2.new(0, 8, 0.5, -8),
+        BackgroundColor3 = COL.TEXT_FAINT,
+        BackgroundTransparency = 0.7,
+        BorderSizePixel  = 0,
+        ZIndex           = 7,
+    }, statusPanel)
+    corner(8, sDotRing)
+
+    local sTxt = make("TextLabel", {
+        Size                  = UDim2.new(1, -38, 1, 0),
+        Position              = UDim2.new(0, 30, 0, 0),
+        BackgroundTransparency = 1,
+        Text                  = "Enter your key to continue",
+        TextColor3            = COL.TEXT,
+        Font                  = Enum.Font.Gotham,
+        TextSize              = 11,
+        TextXAlignment        = Enum.TextXAlignment.Left,
+        ZIndex                = 8,
+    }, statusPanel)
+
+    -- Dot idle pulse
+    local dotPulseConn = RunSvc.Heartbeat:Connect((function()
+        local t = 0
+        return function(dt)
+            t = t + dt
+            if sDotRing and sDotRing.Parent then
+                sDotRing.BackgroundTransparency = 0.60 + 0.30 * math.sin(t * 2.5)
+                local s = 16 + 4 * math.abs(math.sin(t * 2.5))
+                sDotRing.Size = UDim2.new(0, s, 0, s)
+                sDotRing.Position = UDim2.new(0, 8 - (s-8)/2, 0.5, -s/2)
+            end
+        end
+    end)())
+    conn(dotPulseConn)
+
+    local function setStatus(text, col, dotCol, ring)
+        if sTxt and sTxt.Parent then
+            sTxt.Text       = text
+            sTxt.TextColor3 = col or COL.TEXT
+        end
+        if sDot and sDot.Parent then
+            tw(sDot,     {BackgroundColor3 = dotCol or COL.TEXT_FAINT}, 0.2)
+            tw(sDotRing, {BackgroundColor3 = ring   or COL.TEXT_FAINT}, 0.2)
         end
     end
+    addItem(statusPanel)
+
+    -- ════════════════════════════════════════════
+    --  DISCORD BUTTON
+    -- ════════════════════════════════════════════
+    if cfg.Discord ~= "" then
+        local dPanel = make("Frame", {
+            Size             = UDim2.new(1, 0, 0, 38),
+            BackgroundColor3 = Color3.fromRGB(30, 33, 84),
+            BorderSizePixel  = 0,
+            ZIndex           = 7,
+        })
+        corner(12, dPanel)
+        uiStroke(Color3.fromRGB(88, 101, 242), 1, dPanel, 0.4)
+
+        local dIcon = make("TextLabel", {
+            Size                  = UDim2.new(0, 20, 1, 0),
+            Position              = UDim2.new(0, 10, 0, 0),
+            BackgroundTransparency = 1,
+            Text                  = "🔗",
+            TextSize              = 13,
+            ZIndex                = 8,
+        }, dPanel)
+
+        local dText = make("TextLabel", {
+            Size                  = UDim2.new(1, -70, 1, 0),
+            Position              = UDim2.new(0, 32, 0, 0),
+            BackgroundTransparency = 1,
+            Text                  = cfg.Discord,
+            TextColor3            = Color3.fromRGB(180, 188, 255),
+            Font                  = Enum.Font.GothamBold,
+            TextSize              = 11,
+            TextXAlignment        = Enum.TextXAlignment.Left,
+            ZIndex                = 8,
+        }, dPanel)
+
+        local dArrow = make("TextLabel", {
+            Size                  = UDim2.new(0, 50, 1, 0),
+            Position              = UDim2.new(1, -58, 0, 0),
+            BackgroundTransparency = 1,
+            Text                  = "Copy ›",
+            TextColor3            = Color3.fromRGB(130, 140, 210),
+            Font                  = Enum.Font.GothamBold,
+            TextSize              = 9,
+            ZIndex                = 8,
+        }, dPanel)
+
+        -- Hover effect
+        local dBtn = make("TextButton", {
+            Size                  = UDim2.new(1, 0, 1, 0),
+            BackgroundTransparency = 1,
+            Text                  = "",
+            ZIndex                = 9,
+        }, dPanel)
+        dBtn.MouseEnter:Connect(function()
+            tw(dPanel, {BackgroundColor3 = Color3.fromRGB(40, 45, 100)}, 0.15)
+        end)
+        dBtn.MouseLeave:Connect(function()
+            tw(dPanel, {BackgroundColor3 = Color3.fromRGB(30, 33, 84)}, 0.15)
+        end)
+        dBtn.MouseButton1Click:Connect(function()
+            if setclipboard then setclipboard(cfg.Discord) end
+            dArrow.Text = "Copied!"
+            tw(dPanel, {BackgroundColor3 = Color3.fromRGB(30, 60, 40)}, 0.15)
+            task.delay(1.5, function()
+                if dArrow and dArrow.Parent then dArrow.Text = "Copy ›" end
+                if dPanel and dPanel.Parent then tw(dPanel, {BackgroundColor3 = Color3.fromRGB(30,33,84)}, 0.2) end
+            end)
+            setStatus("Discord link copied!", Color3.fromRGB(100, 120, 255), Color3.fromRGB(88,101,242), Color3.fromRGB(88,101,242))
+        end)
+        addItem(dPanel)
+    end
+
+    -- ════════════════════════════════════════════
+    --  VERIFY BUTTON  (celestial style)
+    -- ════════════════════════════════════════════
+    local vPanel = make("Frame", {
+        Size             = UDim2.new(1, 0, 0, 46),
+        BackgroundColor3 = curAccent,
+        BorderSizePixel  = 0,
+        ZIndex           = 7,
+    })
+    corner(14, vPanel)
+    local vPanelGrad = gradient(curAccent, darker(curAccent, 0.45), 135, vPanel)
+    reg(vPanel, "BackgroundColor3", function(c) return c end)
+
+    -- Shimmer overlay
+    local vShimmer = make("Frame", {
+        Size                  = UDim2.new(0.4, 0, 1, 0),
+        Position              = UDim2.new(-0.4, 0, 0, 0),
+        BackgroundColor3      = Color3.new(1, 1, 1),
+        BackgroundTransparency = 0.88,
+        BorderSizePixel       = 0,
+        ZIndex                = 8,
+    }, vPanel)
+    corner(14, vShimmer)
+    local vShimmerGrad = Instance.new("UIGradient")
+    vShimmerGrad.Color    = ColorSequence.new({
+        ColorSequenceKeypoint.new(0, Color3.new(1,1,1)),
+        ColorSequenceKeypoint.new(0.5, Color3.new(1,1,1)),
+        ColorSequenceKeypoint.new(1, Color3.fromRGB(200,200,200)),
+    })
+    vShimmerGrad.Rotation = 0
+    vShimmerGrad.Parent   = vShimmer
+
+    -- Shimmer loop
+    local shimmerRunning = true
+    task.spawn(function()
+        task.wait(1)
+        while shimmerRunning and vShimmer and vShimmer.Parent do
+            tw(vShimmer, {Position = UDim2.new(1.4, 0, 0, 0)}, 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+            task.wait(0.7)
+            vShimmer.Position = UDim2.new(-0.4, 0, 0, 0)
+            task.wait(2.8)
+        end
+    end)
+
+    local vBtn = make("TextButton", {
+        Size                  = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text                  = "",
+        ZIndex                = 9,
+    }, vPanel)
+
+    local vLabel = make("TextLabel", {
+        Size                  = UDim2.new(1, 0, 1, 0),
+        BackgroundTransparency = 1,
+        Text                  = "✦  VERIFY KEY",
+        TextColor3            = COL.WHITE,
+        Font                  = Enum.Font.GothamBold,
+        TextSize              = 12,
+        ZIndex                = 9,
+    }, vPanel)
+
+    vBtn.MouseEnter:Connect(function()
+        tw(vPanel, {BackgroundColor3 = lighter(curAccent, 1.12)}, 0.15)
+        tw(vPanel, {Size = UDim2.new(1, 0, 0, 48)}, 0.12)
+    end)
+    vBtn.MouseLeave:Connect(function()
+        tw(vPanel, {BackgroundColor3 = curAccent}, 0.15)
+        tw(vPanel, {Size = UDim2.new(1, 0, 0, 46)}, 0.12)
+    end)
+    addItem(vPanel)
+
+    -- ── Spinner ─────────────────────────────────────────────────
+    local spinFrames = { "✦  VERIFYING  ●○○", "✦  VERIFYING  ○●○", "✦  VERIFYING  ○○●", "✦  VERIFYING  ○●○" }
+    local spinIdx, spinConn = 0, nil
+
+    local function startSpin()
+        vLabel.Text = spinFrames[1]
+        spinConn = RunSvc.Heartbeat:Connect((function()
+            local t = 0
+            return function(dt)
+                t = t + dt
+                if t > 0.18 then
+                    t = 0
+                    spinIdx = (spinIdx % #spinFrames) + 1
+                    if vLabel and vLabel.Parent then
+                        vLabel.Text = spinFrames[spinIdx]
+                    end
+                end
+            end
+        end)())
+    end
+
+    local function stopSpin()
+        if spinConn then spinConn:Disconnect(); spinConn = nil end
+        if vLabel and vLabel.Parent then vLabel.Text = "✦  VERIFY KEY" end
+    end
+
+    -- ════════════════════════════════════════════
+    --  VERIFY LOGIC
+    -- ════════════════════════════════════════════
+    local busy = false
+
+    local function shakeInput()
+        local basePos = inputPanel.Position
+        local shakes  = {{-8,0},{8,0},{-5,0},{5,0},{-2,0},{0,0}}
+        local idx = 1
+        local function doShake()
+            if idx > #shakes or not inputPanel or not inputPanel.Parent then return end
+            local s = shakes[idx]
+            inputPanel.Position = UDim2.new(basePos.X.Scale, basePos.X.Offset + s[1], basePos.Y.Scale, basePos.Y.Offset + s[2])
+            idx = idx + 1
+            task.delay(0.045, doShake)
+        end
+        doShake()
+    end
+
+    conn(vBtn.MouseButton1Click:Connect(function()
+        if busy then return end
+        local key = keyBox.Text:match("^%s*(.-)%s*$") or ""
+
+        if key == "" then
+            setStatus("Please enter your key first.", COL.RED, COL.RED, COL.RED)
+            tw(inputPanelStroke, {Color = COL.RED, Thickness = 1.6}, 0.12)
+            shakeInput()
+            task.delay(1.2, function()
+                if inputPanelStroke and inputPanelStroke.Parent then
+                    tw(inputPanelStroke, {Color = COL.BORDER, Thickness = 1.2}, 0.2)
+                end
+                setStatus("Enter your key to continue", COL.TEXT, COL.TEXT_FAINT, COL.TEXT_FAINT)
+            end)
+            return
+        end
+
+        busy = true
+        vBtn.Active = false
+        startSpin()
+        setStatus("Connecting to VOID servers…", COL.TEXT, curAccent, curAccent)
+        tw(vPanel, {BackgroundColor3 = darker(curAccent, 0.70)}, 0.2)
+
+        task.spawn(function()
+            local ok, msg, data = validateKey(cfg.ApiUrl, key)
+            stopSpin()
+            busy      = false
+            vBtn.Active = true
+
+            if ok then
+                -- ✓ Success
+                shimmerRunning = false
+                setStatus("✓  " .. (msg or "Access granted"), COL.GREEN, COL.GREEN, COL.GREEN)
+                tw(inputPanelStroke, {Color = COL.GREEN, Thickness = 1.8}, 0.2)
+                tw(vPanel, {BackgroundColor3 = COL.GREEN_DK}, 0.25)
+                vLabel.Text = "✦  ACCESS GRANTED"
+                vLabel.TextColor3 = COL.GREEN
+
+                -- Success particle burst
+                for i = 1, 8 do
+                    task.spawn(function()
+                        local p = make("Frame", {
+                            Size                  = UDim2.new(0, math.random(4,10), 0, math.random(4,10)),
+                            Position              = UDim2.new(0.5, math.random(-80,80), 0.5, math.random(-40,40)),
+                            BackgroundColor3      = COL.GREEN,
+                            BackgroundTransparency = 0.3,
+                            BorderSizePixel       = 0,
+                            ZIndex                = 15,
+                        }, gui)
+                        corner(5, p)
+                        tw(p, {
+                            Position              = UDim2.new(0.5, math.random(-140,140), 0.5, math.random(-90,90)),
+                            BackgroundTransparency = 1,
+                            Size                  = UDim2.new(0, 2, 0, 2),
+                        }, 0.6, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+                        task.delay(0.65, function() if p and p.Parent then p:Destroy() end end)
+                    end)
+                    task.wait(0.03)
+                end
+
+                if cfg.RememberKey then saveKey(key) end
+
+                task.delay(0.6, function()
+                    shimmerRunning = false
+                    if cfg.AutoClose then
+                        tw(win,      {BackgroundTransparency = 1, Size = UDim2.new(0, WIN_W*0.9, 0, WIN_H*0.9)}, 0.35, Enum.EasingStyle.Quint)
+                        tw(backdrop, {BackgroundTransparency = 1}, 0.35)
+                        tw(glow,     {BackgroundTransparency = 1}, 0.35)
+                        if blur then tw(blur, {Size = 0}, 0.35) end
+                        task.delay(0.4, function()
+                            for _, c in ipairs(connections) do pcall(function() c:Disconnect() end) end
+                            if gui and gui.Parent then gui:Destroy() end
+                            if blur and blur.Parent then blur:Destroy() end
+                        end)
+                    end
+                    cfg.OnSuccess(data)
+                end)
+            else
+                -- ✗ Fail
+                setStatus("✗  " .. (msg or "Invalid key"), COL.RED, COL.RED, COL.RED)
+                tw(inputPanelStroke, {Color = COL.RED, Thickness = 1.8}, 0.12)
+                tw(vPanel, {BackgroundColor3 = COL.RED_DK}, 0.2)
+                vLabel.Text = "✦  TRY AGAIN"
+
+                task.delay(1.6, function()
+                    if inputPanelStroke and inputPanelStroke.Parent then
+                        tw(inputPanelStroke, {Color = COL.BORDER, Thickness = 1.2}, 0.2)
+                    end
+                    if vPanel and vPanel.Parent then
+                        tw(vPanel, {BackgroundColor3 = curAccent}, 0.2)
+                    end
+                    if vLabel and vLabel.Parent then
+                        vLabel.Text = "✦  VERIFY KEY"
+                        vLabel.TextColor3 = COL.WHITE
+                    end
+                end)
+
+                cfg.OnFail(key, msg)
+            end
+        end)
+    end))
+
+    -- ── Footer ──────────────────────────────────────────────────
+    local footerLbl = make("TextLabel", {
+        Size                  = UDim2.new(1, -28, 0, 22),
+        Position              = UDim2.new(0, 14, 1, -26),
+        BackgroundTransparency = 1,
+        Text                  = "VOID  ✦  CELESTIAL  ✦  " .. cfg.Version .. "  ✦  " .. tostring(cfg.ToggleKey) .. " to toggle",
+        TextColor3            = COL.TEXT_FAINT,
+        Font                  = Enum.Font.Gotham,
+        TextSize              = 8,
+        ZIndex                = 6,
+    }, win)
+
+    -- Animate footer text color
+    local footerConn = RunSvc.Heartbeat:Connect((function()
+        local t = 0
+        return function(dt)
+            t = t + dt * 0.5
+            if footerLbl and footerLbl.Parent then
+                local alpha = 0.5 + 0.3 * math.sin(t)
+                footerLbl.TextColor3 = Color3.new(
+                    COL.TEXT_FAINT.R * (1 + alpha * 0.5),
+                    COL.TEXT_FAINT.G * (1 + alpha * 0.5),
+                    COL.TEXT_FAINT.B * (1 + alpha * 0.5)
+                )
+            end
+        end
+    end)())
+    conn(footerConn)
+
+    -- ════════════════════════════════════════════
+    --  DRAG
+    -- ════════════════════════════════════════════
+    local dragging, dStart, wStart
+    conn(banner.InputBegan:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then
+            dragging = true; dStart = i.Position; wStart = win.Position
+        end
+    end))
+    conn(banner.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then dragging = false end
+    end))
+    conn(UIS.InputChanged:Connect(function(i)
+        if dragging and i.UserInputType == Enum.UserInputType.MouseMovement then
+            local d = i.Position - dStart
+            win.Position = UDim2.new(wStart.X.Scale, wStart.X.Offset + d.X, wStart.Y.Scale, wStart.Y.Offset + d.Y)
+            -- Move glow with window
+            if glow and glow.Parent then
+                glow.Position = UDim2.new(win.Position.X.Scale, win.Position.X.Offset - 20, win.Position.Y.Scale, win.Position.Y.Offset - 20)
+            end
+        end
+    end))
+
+    -- ════════════════════════════════════════════
+    --  TOGGLE VISIBILITY
+    -- ════════════════════════════════════════════
+    local shown = true
+    conn(UIS.InputBegan:Connect(function(i, gp)
+        if gp or i.KeyCode ~= cfg.ToggleKey then return end
+        shown = not shown
+        if shown then
+            win.Visible     = true
+            backdrop.Visible = true
+            tw(win,      {BackgroundTransparency = 0},    0.22)
+            tw(backdrop, {BackgroundTransparency = 0.25}, 0.22)
+            tw(glow,     {BackgroundTransparency = 0.88}, 0.22)
+            if blur then tw(blur, {Size = 20}, 0.22) end
+            cfg.OnOpen()
+        else
+            tw(win,      {BackgroundTransparency = 1}, 0.22)
+            tw(backdrop, {BackgroundTransparency = 1}, 0.22)
+            tw(glow,     {BackgroundTransparency = 1}, 0.22)
+            if blur then tw(blur, {Size = 0}, 0.22) end
+            task.delay(0.25, function()
+                if not shown then
+                    if win      then win.Visible     = false end
+                    if backdrop then backdrop.Visible = false end
+                end
+            end)
+            cfg.OnClose()
+        end
+    end))
+
+    -- ════════════════════════════════════════════
+    --  TYPEWRITER TITLE ANIMATION
+    -- ════════════════════════════════════════════
+    local subStr = cfg.Subtitle
+    if cfg.ShowSteps and cfg.Steps > 1 then
+        subStr = subStr .. "  ✦  " .. cfg.Steps .. "-Step"
+    end
+
+    if cfg.TypewriterTitle then
+        task.delay(0.3, function()
+            typewriter(titleLbl, cfg.Title:upper(), 14, function()
+                task.delay(0.1, function()
+                    typewriter(subLbl, subStr:upper(), 18)
+                end)
+            end)
+        end)
+    else
+        titleLbl.Text = cfg.Title:upper()
+        subLbl.Text   = subStr:upper()
+    end
+
+    -- Apply initial accent
+    applyAccentInstant(cfg.Colors[1])
+
+    -- ════════════════════════════════════════════
+    --  RETURN INSTANCE
+    -- ════════════════════════════════════════════
+    local inst = setmetatable({
+        _gui         = gui,
+        _blur        = blur,
+        _win         = win,
+        _connections = connections,
+        _cfg         = cfg,
+        _titleLbl    = titleLbl,
+        _statusTxt   = sTxt,
+        _statusDot   = sDot,
+        _shimmer     = function() shimmerRunning = false end,
+    }, VoidLib)
+
+    return inst
 end
 
--- ══════════════════════════════════════════════
---  PUBLIC: SetKeys  (update key list at runtime)
--- ══════════════════════════════════════════════
-function VoidKeyLib:SetApiUrl(url)
-    self.ApiUrl = url
+-- ════════════════════════════════════════════════════════════════════
+--  PUBLIC METHODS
+-- ════════════════════════════════════════════════════════════════════
+
+function VoidLib:Destroy()
+    for _, c in ipairs(self._connections or {}) do
+        pcall(function() c:Disconnect() end)
+    end
+    if self._gui  and self._gui.Parent  then self._gui:Destroy()  end
+    if self._blur and self._blur.Parent then self._blur:Destroy() end
 end
 
-return VoidKeyLib
+function VoidLib:Hide()
+    if self._win and self._win.Parent then
+        self._win.Visible = false
+    end
+end
+
+function VoidLib:Show()
+    if self._win and self._win.Parent then
+        self._win.Visible = true
+        tw(self._win, {BackgroundTransparency = 0}, 0.2)
+    end
+end
+
+function VoidLib:SetTitle(text)
+    if self._titleLbl and self._titleLbl.Parent then
+        self._titleLbl.Text = (text or ""):upper()
+    end
+end
+
+function VoidLib:SetStatus(text, color)
+    if self._statusTxt and self._statusTxt.Parent then
+        self._statusTxt.Text       = text or ""
+        self._statusTxt.TextColor3 = color or Color3.fromRGB(160, 148, 190)
+    end
+end
+
+return VoidLib
